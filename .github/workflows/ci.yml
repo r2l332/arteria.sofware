@@ -194,11 +194,10 @@ jobs:
 
       - name: Tag images for scanning
         run: |
-          # Get the actual image names from compose (project name varies by directory)
-          API_IMAGE=$(docker compose images api --format '{{.Repository}}:{{.Tag}}' | head -1)
-          FRONTEND_IMAGE=$(docker compose images frontend --format '{{.Repository}}:{{.Tag}}' | head -1)
-          docker tag "$API_IMAGE" arteria-api:scan
-          docker tag "$FRONTEND_IMAGE" arteria-frontend:scan
+          # Get compose project name (directory-based)
+          PROJECT=$(docker compose config --format json | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])")
+          docker tag "${PROJECT}-api" arteria-api:scan
+          docker tag "${PROJECT}-frontend" arteria-frontend:scan
 
       - name: Scan API image for vulnerabilities
         uses: aquasecurity/trivy-action@master
