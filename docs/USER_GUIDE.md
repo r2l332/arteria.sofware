@@ -365,3 +365,109 @@ When writing JavaScript filters, the message object has these fields:
 - Scripts have a 50ms execution timeout
 - Scripts cannot access the network, filesystem, or external APIs
 - Properties are string key-value pairs only
+
+---
+
+## 9. Settings
+
+**URL:** `/settings`
+
+### Message Retention
+
+Configure how long messages are kept before automatic purging:
+- **Messages TTL** — default 30 days
+- **Error Messages TTL** — default 90 days
+- Click **Update Retention Policy** to apply
+
+### Configuration Backups
+
+- **Create Backup** — saves a named snapshot to the database
+- **Export JSON** — downloads the full config as a `.json` file
+- **Import JSON** — upload a backup file to restore configuration
+- Auto-backup runs every 6 hours
+
+### System Health Check
+
+Click **Run Tests** to verify:
+- API health
+- V8 JS engine
+- Ingestion service connectivity
+- Processing service connectivity
+- NATS connectivity
+- ScyllaDB connectivity
+
+---
+
+## 10. Users & Access Control
+
+**URL:** `/users` (visible to admin and security roles only)
+
+### Managing Users
+
+- Click **+ New User** → enter username, password (min 8 chars), and role
+- **Change role** — use the inline dropdown on the user row
+- **Disable a user** — click the status badge to toggle active/disabled
+- **Delete a user** — click Delete on the user row
+
+### Roles Reference
+
+The bottom panel shows all roles with their exact permissions. The 5 roles are:
+
+| Role | Purpose |
+|------|---------|
+| **admin** | Full system access |
+| **developer** | Build routes/filters, test in playground, manage CPs. No production message access |
+| **operator** | Monitor metrics and errors. No message content or config changes |
+| **security** | Manage users, roles, config backups. No access to routes or messages |
+| **viewer** | Read-only access to everything except config and users |
+
+---
+
+## 11. Cloud Connector Configuration
+
+When creating or editing a Communication Point, the **Protocol / Connector** dropdown offers:
+
+**Traditional:** MLLP, HTTP, TCP, REST — shows host, port, retry config
+
+**Cloud Storage:** S3, Azure Blob — shows bucket/container, region, credentials
+
+**Event/Queue:** SQS, SNS, Azure Event Hub, Azure Service Bus — shows queue URL, topic ARN, connection string
+
+**HTTP:** Webhook — shows URL, method, retries, custom headers
+
+The config panel changes dynamically based on the selected type. Cloud connectors store their configuration in the CP's `config_json` field.
+
+---
+
+## 12. Tunnel Mesh
+
+**URL:** `/tunnel`
+
+### Creating a Tunnel Node
+
+1. Click **+ New Tunnel Node** → enter name and site name
+2. An enrollment token is generated — copy the command shown
+3. Deploy the agent Docker image at the remote site:
+   ```bash
+   docker run -d -e BROKER_ADDR=arteria.software:9443 \
+     -p 2575:2575 arteria-agent enroll <token>
+   docker run -d -e BROKER_ADDR=arteria.software:9443 \
+     -p 2575:2575 arteria-agent connect
+   ```
+4. The node status changes from PENDING → ENROLLED → CONNECTED
+
+### Linking CPs to Tunnel Nodes
+
+1. Go to **Comm Points** → edit a CP → check **Enable Encrypted Tunnel**
+2. Select the tunnel node from the dropdown
+3. Set the local port the agent should listen on
+4. Save — config is automatically pushed to the agent
+5. The agent starts listening and all traffic flows encrypted
+
+### Port Management
+
+On the agent host:
+```bash
+./agent-ports.sh add 2579 2580     # Add new ports
+./agent-ports.sh restart           # Recreate container
+```

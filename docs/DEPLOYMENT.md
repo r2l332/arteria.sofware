@@ -328,3 +328,170 @@ curl http://localhost:8222/jsz | python3 -m json.tool
 │  Volumes: nats_data, scylla_data, arteria_logs               │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 8. TLS / HTTPS
+
+Caddy reverse proxy auto-generates TLS certificates on first boot.
+
+### Auto Let's Encrypt (production)
+
+```bash
+# .env
+DOMAIN=arteria.software
+TLS_EMAIL=admin@arteria.software
+```
+
+Caddy auto-provisions a Let's Encrypt cert. Requires ports 80+443 reachable from the internet.
+
+### Custom / Enterprise Certificates
+
+```bash
+mkdir certs/
+cp your-cert.crt certs/server.crt
+cp your-key.key certs/server.key
+
+# Use the custom certs Caddyfile
+cp infra/caddy/Caddyfile.custom-certs infra/caddy/Caddyfile
+
+# .env
+DOMAIN=arteria.hospital.internal
+TLS_CERT_DIR=./certs
+```
+
+### Self-Signed (local dev)
+
+No config needed — Caddy generates a self-signed cert for `localhost` automatically.
+
+---
+
+## 9. Security Configuration
+
+### RBAC
+
+Five built-in roles. Users are managed via dashboard or API:
+
+```bash
+# Create a developer user
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -d '{"username":"dev1","password":"securepass","role":"developer"}' \
+  https://arteria.software/api/v1/users
+```
+
+### Rate Limiting
+
+Login attempts are rate-limited: 5 attempts per 5 minutes, 15-minute lockout.
+
+### Audit Log
+
+All mutations and logins are logged:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://arteria.software/api/v1/audit-log?username=admin"
+```
+
+### IP Allowlisting
+
+Set `IP_ALLOWLIST=10.0.0.0/8,192.168.1.0/24` in the API environment to restrict access.
+
+---
+
+## 10. Backup & Retention
+
+### Automatic Backups
+
+The `arteria-backup` container runs a cron job every 6 hours:
+- Exports all config to `/backups/arteria-config-YYYYMMDD-HHMMSS.json`
+- Saves a named snapshot to ScyllaDB
+- Cleans up backups older than 30 days
+
+### Manual Backup/Restore
+
+```bash
+# Export
+curl -H "Authorization: Bearer $TOKEN" \
+  https://arteria.software/api/v1/config/export > backup.json
+
+# Restore
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -d @backup.json https://arteria.software/api/v1/config/import
+```
+
+### Message Retention
+
+Messages auto-expire via ScyllaDB TTL:
+
+| Data | Default TTL | Configurable |
+|------|------------|-------------|
+| Messages | 30 days | Yes, via API |
+| Error messages | 90 days | Yes, via API |
+| Config history | 1 year | — |
+| Audit log | 1 year | — |
+| PHI access log | 2 years | — |
+
+```bash
+# Change retention
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  -d '{"messages_ttl_days":60,"error_messages_ttl_days":180}' \
+  https://arteria.software/api/v1/config/retention
+```
+
+---
+
+## 11. Tunnel Mesh Deployment
+
+### Agent Deployment at Remote Site
+
+```bash
+# 1. Create node in Arteria dashboard → get enrollment token
+# 2. Deploy agent:
+docker run -d --name arteria-node \
+  --restart unless-stopped \
+  -v /opt/arteria-agent:/etc/arteria-agent \
+  -e BROKER_ADDR=arteria.software:9443 \
+  -p 2575:2575 \
+  arteria-agent enroll <token>
+
+docker run -d --name arteria-node \
+  --restart unless-stopped \
+  -v /opt/arteria-agent:/etc/arteria-agent \
+  -e BROKER_ADDR=arteria.software:9443 \
+  -p 2575:2575 -p 2576:2576 \
+  arteria-agent connect
+```
+
+### Port Management
+
+```bash
+# On the agent host:
+./agent-ports.sh list              # Show current ports
+./agent-ports.sh add 2579 2580     # Add ports
+./agent-ports.sh restart           # Recreate container
+```
+
+### Required Firewall Ports
+
+| Location | Port | Direction | Purpose |
+|----------|------|-----------|---------|
+| Arteria (cloud) | 443 | Inbound | Dashboard + API (HTTPS) |
+| Arteria (cloud) | 9443 | Inbound | Tunnel broker (agent connections) |
+| Agent (hospital) | — | Outbound to :9443 | Agent connects to broker |
+| Agent (hospital) | 2575+ | Local | HL7 apps send to agent |
+
+---
+
+## 12. Testing
+
+### Automated Test Suite
+
+```bash
+docker compose --profile test run --rm test-runner all
+```
+
+35 tests across 6 suites: Ingestion, API CRUD, Filter Chain, Routing, Error Handling, Metrics.
+
+### System Health Check
+
+Dashboard → Settings → Run Tests (checks API, V8, NATS, ScyllaDB connectivity).

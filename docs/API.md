@@ -510,3 +510,132 @@ Change log level at runtime (no restart required).
 ```json
 {"status": "updated", "level": "WARN"}
 ```
+
+---
+
+## Tunnel Mesh
+
+### `GET /api/v1/tunnel/nodes`
+
+List all tunnel nodes.
+
+### `POST /api/v1/tunnel/nodes`
+
+Create a tunnel node. Returns enrollment token.
+
+**Request:** `{"name": "Hospital A", "site_name": "Hospital A"}`
+
+**Response:** `201` `{"node_id": "uuid", "enrollment_token": "uuid", "instructions": "Run: arteria-agent enroll <token>"}`
+
+### `DELETE /api/v1/tunnel/nodes/:id`
+
+Delete a tunnel node.
+
+### `POST /api/v1/tunnel/nodes/:id/push-config`
+
+Push updated CP configuration to a connected agent.
+
+---
+
+## JS Filter Playground
+
+### `POST /api/v1/playground/execute`
+
+Execute a JS filter against a test payload in a real V8 isolate.
+
+**Request:**
+```json
+{
+  "script": "function transform(msg) { msg.properties.test = true; return msg; }",
+  "filter_type": "javascript",
+  "payload": "{\"messageId\":\"test\",\"messageType\":\"ADT\",\"triggerEvent\":\"A01\",\"sendingFacility\":\"HOSP\",\"patientId\":\"PAT001\",\"rawPayload\":\"MSH|...\",\"properties\":{}}"
+}
+```
+
+**Response:** `{"success": true, "output": "{...transformed JSON...}"}`
+
+---
+
+## User Management
+
+**Required role:** `admin` or `security`
+
+### `GET /api/v1/users`
+
+List all users.
+
+### `POST /api/v1/users`
+
+Create a user. **Request:** `{"username": "dev1", "password": "securepass123", "role": "developer"}`
+
+### `PUT /api/v1/users/:id/role`
+
+Update role or active status. **Request:** `{"role": "operator"}` or `{"is_active": false}`
+
+### `DELETE /api/v1/users/:id`
+
+Delete a user.
+
+### `GET /api/v1/roles`
+
+List all roles with their permissions.
+
+---
+
+## Connector Types
+
+### `GET /api/v1/connector-types`
+
+Returns all supported CP connector types grouped by category.
+
+**Response:**
+```json
+{
+  "connector_types": {
+    "traditional": ["MLLP", "TCP", "HTTP", "REST"],
+    "storage": ["S3", "AZURE_BLOB"],
+    "eventing": ["SQS", "SNS", "AZURE_EVENT_HUB", "AZURE_SERVICE_BUS"],
+    "http": ["WEBHOOK"]
+  }
+}
+```
+
+---
+
+## Audit Log
+
+### `GET /api/v1/audit-log?username=admin&limit=50`
+
+View security audit log for a user. **Required role:** `admin` or `security`
+
+---
+
+## Config Backup & Restore
+
+### `GET /api/v1/config/export`
+
+Export all configuration as JSON (CPs, routes, filters, lookups, tunnel nodes).
+
+### `POST /api/v1/config/import`
+
+Import configuration from a JSON backup.
+
+### `GET /api/v1/config/backups`
+
+List saved config backups.
+
+### `POST /api/v1/config/backups`
+
+Create a named backup. **Request:** `{"name": "Before upgrade", "description": "Pre-v2 snapshot"}`
+
+### `GET /api/v1/config/history?type=route`
+
+View config change history. Types: `route`, `filter`, `comm_point`, `tunnel_node`, `lookup`
+
+### `GET /api/v1/config/retention`
+
+Get current message retention TTL settings.
+
+### `PUT /api/v1/config/retention`
+
+Update retention policy. **Request:** `{"messages_ttl_days": 30, "error_messages_ttl_days": 90}`
