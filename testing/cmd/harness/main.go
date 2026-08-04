@@ -264,7 +264,15 @@ type TestSuite struct {
 
 func (s *TestSuite) run(name string, fn func() error) {
 	start := time.Now()
-	err := fn()
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		err = fn()
+	}()
 	dur := time.Since(start).Seconds() * 1000
 
 	result := TestResult{
@@ -474,7 +482,14 @@ func runIngestTests(mllpHost string, mllpPort int, apiBase string) *TestSuite {
 		if err != nil {
 			return err
 		}
-		count := result["count"].(float64)
+		countVal, ok := result["count"]
+		if !ok || countVal == nil {
+			return fmt.Errorf("API response missing 'count' field: %v", result)
+		}
+		count, ok := countVal.(float64)
+		if !ok {
+			return fmt.Errorf("expected count to be a number, got %T: %v", countVal, countVal)
+		}
 		if count < 1 {
 			return fmt.Errorf("expected messages in DB, got count=%v", count)
 		}
