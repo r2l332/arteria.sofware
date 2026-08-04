@@ -166,8 +166,42 @@ func readMLLPFrame(r *bufio.Reader) ([]byte, error) {
 
 // --- API Client ---
 
+var authToken string
+
+func apiLogin(baseURL string) error {
+	username := os.Getenv("ADMIN_USER")
+	if username == "" {
+		username = "admin"
+	}
+	password := os.Getenv("ADMIN_PASS")
+	if password == "" {
+		password = "arteria123"
+	}
+
+	payload, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("login request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	json.Unmarshal(body, &result)
+
+	token, ok := result["token"].(string)
+	if !ok || token == "" {
+		return fmt.Errorf("login failed: %s", string(body))
+	}
+	authToken = token
+	return nil
+}
+
 func apiGet(baseURL, path string) (map[string]interface{}, error) {
-	resp, err := http.Get(baseURL + path)
+	req, _ := http.NewRequest("GET", baseURL+path, nil)
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +214,12 @@ func apiGet(baseURL, path string) (map[string]interface{}, error) {
 
 func apiPost(baseURL, path string, payload interface{}) (map[string]interface{}, error) {
 	data, _ := json.Marshal(payload)
-	resp, err := http.Post(baseURL+path, "application/json", bytes.NewReader(data))
+	req, _ := http.NewRequest("POST", baseURL+path, bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +234,9 @@ func apiPut(baseURL, path string, payload interface{}) error {
 	data, _ := json.Marshal(payload)
 	req, _ := http.NewRequest("PUT", baseURL+path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -388,6 +430,15 @@ func waitForServices(apiBase string) {
 
 func runAllTests(mllpHost string, mllpPort int, apiBase string) {
 	waitForServices(apiBase)
+
+	// Authenticate before running tests
+	if err := apiLogin(apiBase); err != nil {
+		fmt.Printf("WARNING: Login failed: %v\n", err)
+		fmt.Println("API tests requiring auth will fail.")
+	} else {
+		fmt.Println("Authenticated as admin.")
+	}
+
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("ARTERIA TEST HARNESS — Full Suite")
 	fmt.Println(strings.Repeat("=", 60))
