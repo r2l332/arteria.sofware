@@ -16,10 +16,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/r2l332/arteria.app/backend/pkg/auth"
+	"github.com/r2l332/arteria.app/backend/pkg/connectors"
 	"github.com/r2l332/arteria.app/backend/pkg/logging"
 	"github.com/r2l332/arteria.app/backend/pkg/metrics"
 	"github.com/r2l332/arteria.app/backend/pkg/natsutil"
 	"github.com/r2l332/arteria.app/backend/pkg/scyllautil"
+	"github.com/r2l332/arteria.app/backend/pkg/security"
 )
 
 func main() {
@@ -70,6 +72,7 @@ func main() {
 
 	app := fiber.New(fiber.Config{AppName: "Arteria API"})
 	app.Use(fiberlogger.New())
+	app.Use(security.Headers())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     envOrDefault("CORS_ORIGINS", "*"),
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
@@ -77,12 +80,19 @@ func main() {
 		AllowCredentials: false,
 	}))
 
+	// Rate limiter for login
+	loginLimiter := auth.NewRateLimiter(5, 5*time.Minute, 15*time.Minute)
+
+	// Audit logger
+	auditLog := security.NewAuditLogger(session)
+	_ = auditLog // Used in login handler and audit middleware
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
 	// --- Public Auth Endpoints (no middleware) ---
-	app.Post("/api/v1/auth/login", loginHandler(session, authCfg))
+	app.Post("/api/v1/auth/login", loginHandler(session, authCfg, loginLimiter, auditLog))
 
 	// --- Auth Middleware for all /api/v1/* routes ---
 	api := app.Group("/api/v1", authMiddleware(authCfg.JWTSecret))
@@ -188,6 +198,31 @@ func main() {
 	api.Put("/users/:id/role", auth.RequirePermission(auth.PermUserManage), updateUserRole(session))
 	api.Delete("/users/:id", auth.RequirePermission(auth.PermUserManage), deleteUser(session))
 	api.Get("/roles", auth.RequirePermission(auth.PermUserView), listRoles())
+
+	// --- Connector Types (reference for CP creation) ---
+	api.Get("/connector-types", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"connector_types": connectors.AllConnectorTypes()})
+	})
+
+	// --- Audit Log ---
+	api.Get("/audit-log", auth.RequireAnyPermission(auth.PermConfigManage, auth.PermUserManage), func(c *fiber.Ctx) error {
+		username := c.Query("username", "")
+		limit := c.QueryInt("limit", 50)
+		if username == "" {
+			return c.JSON(fiber.Map{"audit_log": []fiber.Map{}, "hint": "specify ?username=admin"})
+		}
+		var items []fiber.Map
+		iter := session.Query(`SELECT event_id, timestamp, action, resource, client_ip FROM arteria.audit_log WHERE username = ? LIMIT ?`, username, limit).Iter()
+		var eID gocql.UUID
+		var ts time.Time
+		var action, resource, ip string
+		for iter.Scan(&eID, &ts, &action, &resource, &ip) {
+			items = append(items, fiber.Map{"event_id": eID.String(), "timestamp": ts, "action": action, "resource": resource, "client_ip": ip})
+		}
+		iter.Close()
+		if items == nil { items = []fiber.Map{} }
+		return c.JSON(fiber.Map{"audit_log": items, "count": len(items)})
+	})
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -1083,7 +1118,7 @@ func authMiddleware(jwtSecret string) fiber.Handler {
 	}
 }
 
-func loginHandler(session *gocql.Session, cfg auth.Config) fiber.Handler {
+func loginHandler(session *gocql.Session, cfg auth.Config, limiter *auth.RateLimiter, auditLog *security.AuditLogger) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
 			Username string `json:"username"`
@@ -1097,6 +1132,13 @@ func loginHandler(session *gocql.Session, cfg auth.Config) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "username and password required"})
 		}
 
+		// Rate limit check
+		limitKey := c.IP() + ":" + body.Username
+		if !limiter.Allow(limitKey) {
+			auditLog.Log(body.Username, "LOGIN_BLOCKED", "/auth/login", "", c.IP(), c.Get("User-Agent"), map[string]string{"reason": "rate_limited"})
+			return c.Status(429).JSON(fiber.Map{"error": "too many login attempts, try again later"})
+		}
+
 		// Look up user
 		var userID gocql.UUID
 		var passwordHash, role string
@@ -1104,14 +1146,19 @@ func loginHandler(session *gocql.Session, cfg auth.Config) fiber.Handler {
 		err := session.Query(`SELECT user_id, password_hash, role, is_active FROM arteria.users WHERE username = ? ALLOW FILTERING`, body.Username).
 			Scan(&userID, &passwordHash, &role, &isActive)
 		if err != nil {
+			limiter.Record(limitKey)
+			auditLog.Log(body.Username, "LOGIN_FAILED", "/auth/login", "", c.IP(), c.Get("User-Agent"), nil)
 			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
 		}
 
 		if !isActive {
+			auditLog.Log(body.Username, "LOGIN_DISABLED", "/auth/login", "", c.IP(), c.Get("User-Agent"), nil)
 			return c.Status(401).JSON(fiber.Map{"error": "account disabled"})
 		}
 
 		if !auth.CheckPassword(body.Password, passwordHash) {
+			limiter.Record(limitKey)
+			auditLog.Log(body.Username, "LOGIN_FAILED", "/auth/login", "", c.IP(), c.Get("User-Agent"), nil)
 			return c.Status(401).JSON(fiber.Map{"error": "invalid credentials"})
 		}
 
@@ -1119,6 +1166,9 @@ func loginHandler(session *gocql.Session, cfg auth.Config) fiber.Handler {
 		if err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": "token generation failed"})
 		}
+
+		limiter.Reset(limitKey)
+		auditLog.Log(body.Username, "LOGIN_SUCCESS", "/auth/login", userID.String(), c.IP(), c.Get("User-Agent"), nil)
 
 		return c.JSON(fiber.Map{
 			"token":    token,
