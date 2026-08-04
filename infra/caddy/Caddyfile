@@ -1,14 +1,10 @@
-# Arteria TLS Reverse Proxy (Caddy)
+# Arteria TLS Reverse Proxy
 #
-# Modes:
-# 1. Auto Let's Encrypt (default): Set DOMAIN env var, Caddy gets certs automatically
-# 2. Custom certs: Mount your certs to /certs/ and set TLS_CERT/TLS_KEY env vars
-# 3. Self-signed (dev): Set DOMAIN=localhost for auto self-signed
+# On first boot:
+#   - localhost: auto-generates a self-signed certificate
+#   - real domain: auto-provisions Let's Encrypt certificate
 #
-# This single container terminates TLS for:
-#   - Dashboard (HTTPS :443 → frontend :3000)
-#   - API (HTTPS :443/api → api :8080)
-#   - Tunnel Broker (TLS passthrough :9443 → tunnel-broker :9443)
+# Set DOMAIN=your.domain.com in .env for production.
 
 {$DOMAIN:localhost} {
 	# API routes
@@ -24,17 +20,18 @@
 		reverse_proxy frontend:3000
 	}
 
-	# TLS configuration
-	tls {$TLS_EMAIL:admin@arteria.software} {
-		# If custom certs are provided, use them
-		# Otherwise Caddy auto-provisions via Let's Encrypt
-	}
+	# TLS: Caddy auto-generates certs
+	# - localhost → self-signed (trusted locally)
+	# - real domain → Let's Encrypt (if port 80/443 reachable)
+	# - set TLS_EMAIL for Let's Encrypt notifications
+	tls {$TLS_EMAIL:internal}
 
-	# Security headers (supplement what the API already sets)
+	# Security headers
 	header {
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}
 }
