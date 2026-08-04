@@ -151,6 +151,23 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # --- Scheduled Backup ---
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    container_name: arteria-backup
+    environment:
+      API_URL: http://api:8080
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-arteriadeployment}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - arteria_backups:/backups
+    depends_on:
+      - api
+    restart: unless-stopped
+
   # --- Testing Harness ---
   # Run tests:        docker compose run --rm test-runner all
   # Run specific:     docker compose run --rm test-runner ingest
@@ -190,4 +207,5 @@ volumes:
   nats_data:
   scylla_data:
   arteria_logs:
+  arteria_backups:
   tunnel_ca:

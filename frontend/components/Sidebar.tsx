@@ -16,6 +16,7 @@ import {
   Scan,
   LogOut,
   Users,
+  Settings,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
@@ -41,6 +42,7 @@ const allNav: NavItem[] = [
   { href: '/dicom', label: 'DICOM Nodes', icon: Scan, module: 'dicom', section: 'core' },
   { href: '/playground', label: 'JS Playground', icon: Code2, section: 'tools' },
   { href: '/errors', label: 'Errors / DLQ', icon: AlertTriangle, section: 'tools' },
+  { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
 ];
 

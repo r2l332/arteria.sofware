@@ -1,0 +1,9 @@
+FROM alpine:3.20
+RUN apk add --no-cache curl python3 bash
+COPY scripts/scheduled-backup.sh /usr/local/bin/backup.sh
+RUN chmod +x /usr/local/bin/backup.sh
+
+# Run backup every 6 hours
+RUN echo "0 */6 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root
+
+CMD ["crond", "-f", "-l", "2"]
