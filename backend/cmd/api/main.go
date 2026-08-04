@@ -1163,9 +1163,9 @@ func loginHandler(session *gocql.Session, cfg auth.Config, limiter *auth.RateLim
 		// Look up user
 		var userID gocql.UUID
 		var passwordHash, role string
-		var isActive bool
-		err := session.Query(`SELECT user_id, password_hash, role, is_active FROM arteria.users WHERE username = ? ALLOW FILTERING`, body.Username).
-			Scan(&userID, &passwordHash, &role, &isActive)
+		var isActive, mustChangePassword bool
+		err := session.Query(`SELECT user_id, password_hash, role, is_active, must_change_password FROM arteria.users WHERE username = ? ALLOW FILTERING`, body.Username).
+			Scan(&userID, &passwordHash, &role, &isActive, &mustChangePassword)
 		if err != nil {
 			limiter.Record(limitKey)
 			auditLog.Log(body.Username, "LOGIN_FAILED", "/auth/login", "", c.IP(), c.Get("User-Agent"), nil)
@@ -1192,10 +1192,11 @@ func loginHandler(session *gocql.Session, cfg auth.Config, limiter *auth.RateLim
 		auditLog.Log(body.Username, "LOGIN_SUCCESS", "/auth/login", userID.String(), c.IP(), c.Get("User-Agent"), nil)
 
 		return c.JSON(fiber.Map{
-			"token":    token,
-			"username": body.Username,
-			"role":     role,
-			"expires_in": int(cfg.TokenExpiry.Seconds()),
+			"token":                token,
+			"username":             body.Username,
+			"role":                 role,
+			"expires_in":           int(cfg.TokenExpiry.Seconds()),
+			"must_change_password": mustChangePassword,
 		})
 	}
 }
@@ -1228,7 +1229,7 @@ func changePasswordHandler(session *gocql.Session, cfg auth.Config) fiber.Handle
 		}
 
 		newHash, _ := auth.HashPassword(body.NewPassword)
-		session.Query(`UPDATE arteria.users SET password_hash = ? WHERE user_id = ?`, newHash, userID).Exec()
+		session.Query(`UPDATE arteria.users SET password_hash = ?, must_change_password = ? WHERE user_id = ?`, newHash, false, userID).Exec()
 
 		return c.JSON(fiber.Map{"status": "password changed"})
 	}

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS arteria.users (
     password_hash text,
     role text,            -- 'admin', 'operator', 'viewer'
     is_active boolean,
+    must_change_password boolean,
     created_at timestamp,
     PRIMARY KEY (user_id)
 );

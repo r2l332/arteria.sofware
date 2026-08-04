@@ -8,11 +8,13 @@ interface AuthState {
   token: string | null;
   username: string | null;
   role: string | null;
+  mustChangePassword: boolean;
 }
 
 interface AuthContextType extends AuthState {
   login: (username: string, password: string) => Promise<string | null>;
   logout: () => void;
+  clearMustChangePassword: () => void;
   isAuthenticated: boolean;
   authHeaders: () => Record<string, string>;
 }
@@ -20,7 +22,7 @@ interface AuthContextType extends AuthState {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [auth, setAuth] = useState<AuthState>({ token: null, username: null, role: null });
+  const [auth, setAuth] = useState<AuthState>({ token: null, username: null, role: null, mustChangePassword: false });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setAuth(parsed);
+        setAuth({ ...parsed, mustChangePassword: parsed.mustChangePassword || false });
       } catch {
         localStorage.removeItem('arteria_auth');
       }
@@ -53,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token: data.token,
         username: data.username,
         role: data.role,
+        mustChangePassword: data.must_change_password || false,
       };
       setAuth(state);
       localStorage.setItem('arteria_auth', JSON.stringify(state));
@@ -63,8 +66,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    setAuth({ token: null, username: null, role: null });
+    setAuth({ token: null, username: null, role: null, mustChangePassword: false });
     localStorage.removeItem('arteria_auth');
+  };
+
+  const clearMustChangePassword = () => {
+    const updated = { ...auth, mustChangePassword: false };
+    setAuth(updated);
+    localStorage.setItem('arteria_auth', JSON.stringify(updated));
   };
 
   const authHeaders = (): Record<string, string> => {
@@ -81,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ ...auth, login, logout, isAuthenticated: !!auth.token, authHeaders }}>
+    <AuthContext.Provider value={{ ...auth, login, logout, clearMustChangePassword, isAuthenticated: !!auth.token, authHeaders }}>
       {children}
     </AuthContext.Provider>
   );

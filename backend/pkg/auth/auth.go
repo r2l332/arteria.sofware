@@ -24,7 +24,7 @@ func DefaultConfig() Config {
 	return Config{
 		TokenExpiry: 24 * time.Hour,
 		DefaultUser: "admin",
-		DefaultPass: "arteriadeployment",
+		DefaultPass: "arteria123",
 	}
 }
 
@@ -107,6 +107,6 @@ func EnsureDefaultUser(session *gocql.Session, username, password string) error 
 	}
 
 	userID := gocql.TimeUUID()
-	return session.Query(`INSERT INTO arteria.users (user_id, username, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		userID, username, hash, "admin", true, time.Now()).Exec()
+	return session.Query(`INSERT INTO arteria.users (user_id, username, password_hash, role, is_active, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userID, username, hash, "admin", true, true, time.Now()).Exec()
 }
