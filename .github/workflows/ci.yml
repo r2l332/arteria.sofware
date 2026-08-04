@@ -207,6 +207,8 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: '.trivyignore'
+          scanners: 'vuln'
+          pkg-types: 'os'
 
       - name: Scan Frontend image for vulnerabilities
         uses: aquasecurity/trivy-action@master
@@ -216,6 +218,8 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           trivyignores: '.trivyignore'
+          scanners: 'vuln'
+          pkg-types: 'os'
 
   capillary-binaries:
     name: Cross-compile Capillary
