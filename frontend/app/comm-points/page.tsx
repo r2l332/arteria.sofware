@@ -125,16 +125,34 @@ export default function CommPointsPage() {
                         </select>
                       </div>
                       <div>
-                        <label className="text-xs text-arteria-muted">Protocol</label>
+                        <label className="text-xs text-arteria-muted">Protocol / Connector</label>
                         <select value={form.protocol} onChange={(e) => setForm({ ...form, protocol: e.target.value })}
                           className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white">
-                          <option value="MLLP">MLLP</option>
-                          <option value="HTTP">HTTP</option>
-                          <option value="TCP">TCP</option>
-                          <option value="REST">REST</option>
+                          <optgroup label="Traditional">
+                            <option value="MLLP">MLLP (HL7 TCP)</option>
+                            <option value="HTTP">HTTP</option>
+                            <option value="TCP">TCP</option>
+                            <option value="REST">REST API</option>
+                          </optgroup>
+                          <optgroup label="Cloud Storage">
+                            <option value="S3">AWS S3 (Archive)</option>
+                            <option value="AZURE_BLOB">Azure Blob Storage</option>
+                          </optgroup>
+                          <optgroup label="Event / Queue">
+                            <option value="SQS">AWS SQS</option>
+                            <option value="SNS">AWS SNS</option>
+                            <option value="AZURE_EVENT_HUB">Azure Event Hub</option>
+                            <option value="AZURE_SERVICE_BUS">Azure Service Bus</option>
+                          </optgroup>
+                          <optgroup label="HTTP">
+                            <option value="WEBHOOK">Webhook (HTTP POST)</option>
+                          </optgroup>
                         </select>
                       </div>
                     </div>
+
+                    {/* Traditional TCP config */}
+                    {['MLLP', 'HTTP', 'TCP', 'REST'].includes(form.protocol) && (<>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-arteria-muted">Host</label>
@@ -164,6 +182,116 @@ export default function CommPointsPage() {
                           className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" />
                       </div>
                     </div>
+                    </>)}
+
+                    {/* S3 Config */}
+                    {form.protocol === 'S3' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">AWS S3 Configuration</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Bucket Name</label>
+                          <input placeholder="my-hl7-archive" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                        <div><label className="text-xs text-arteria-muted">Region</label>
+                          <input placeholder="us-east-1" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                      <div><label className="text-xs text-arteria-muted">Prefix (folder path)</label>
+                        <input placeholder="hl7/inbound/" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Access Key ID</label>
+                          <input placeholder="AKIA..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                        <div><label className="text-xs text-arteria-muted">Secret Access Key</label>
+                          <input type="password" placeholder="••••••••" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* Azure Blob Config */}
+                    {form.protocol === 'AZURE_BLOB' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">Azure Blob Storage Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">Connection String</label>
+                        <input placeholder="DefaultEndpointsProtocol=https;AccountName=..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Container Name</label>
+                          <input placeholder="hl7-archive" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                        <div><label className="text-xs text-arteria-muted">Prefix</label>
+                          <input placeholder="inbound/" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* SQS Config */}
+                    {form.protocol === 'SQS' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">AWS SQS Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">Queue URL</label>
+                        <input placeholder="https://sqs.us-east-1.amazonaws.com/123456/my-queue" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Access Key ID</label>
+                          <input placeholder="AKIA..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                        <div><label className="text-xs text-arteria-muted">Secret Access Key</label>
+                          <input type="password" placeholder="••••••••" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* SNS Config */}
+                    {form.protocol === 'SNS' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">AWS SNS Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">Topic ARN</label>
+                        <input placeholder="arn:aws:sns:us-east-1:123456:my-topic" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Access Key ID</label>
+                          <input placeholder="AKIA..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                        <div><label className="text-xs text-arteria-muted">Secret Access Key</label>
+                          <input type="password" placeholder="••••••••" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                    </div>
+                    )}
+
+                    {/* Azure Event Hub Config */}
+                    {form.protocol === 'AZURE_EVENT_HUB' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">Azure Event Hub Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">Connection String</label>
+                        <input placeholder="Endpoint=sb://..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div><label className="text-xs text-arteria-muted">Event Hub Name</label>
+                        <input placeholder="hl7-events" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                    </div>
+                    )}
+
+                    {/* Azure Service Bus Config */}
+                    {form.protocol === 'AZURE_SERVICE_BUS' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">Azure Service Bus Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">Connection String</label>
+                        <input placeholder="Endpoint=sb://..." className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div><label className="text-xs text-arteria-muted">Namespace / Queue Name</label>
+                        <input placeholder="hl7-queue" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                    </div>
+                    )}
+
+                    {/* Webhook Config */}
+                    {form.protocol === 'WEBHOOK' && (
+                    <div className="space-y-3 p-3 bg-arteria-bg/50 rounded-lg border border-arteria-border">
+                      <p className="text-2xs text-arteria-muted uppercase tracking-wider font-medium">Webhook Configuration</p>
+                      <div><label className="text-xs text-arteria-muted">URL</label>
+                        <input placeholder="https://api.example.com/hl7/inbound" className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div><label className="text-xs text-arteria-muted">Method</label>
+                          <select className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white">
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                          </select></div>
+                        <div><label className="text-xs text-arteria-muted">Max Retries</label>
+                          <input type="number" defaultValue={3} className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" /></div>
+                      </div>
+                      <div><label className="text-xs text-arteria-muted">Headers (one per line: Key: Value)</label>
+                        <textarea rows={3} placeholder={"Authorization: Bearer token\nX-Custom: value"} className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white font-mono" /></div>
+                    </div>
+                    )}
+
                     <label className="flex items-center gap-2 text-sm text-gray-300">
                       <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="rounded" />
                       Active
