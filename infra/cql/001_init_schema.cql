@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS arteria.routes (
     source_topic text,        -- NATS subject match pattern (e.g., 'ADT^A01', '*')
     destination_topic text,   -- NATS routing subject
     is_active boolean,
+    retention_days int,       -- Per-route message retention (overrides global 30d default)
     created_at timestamp,
     updated_at timestamp,
     PRIMARY KEY (route_id)

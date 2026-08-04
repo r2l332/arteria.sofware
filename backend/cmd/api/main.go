@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -120,55 +121,73 @@ func main() {
 	})
 
 	// --- Communication Points ---
-	api.Get("/comm-points", listCommPoints(session))
-	api.Post("/comm-points", createCommPoint(session, nc))
-	api.Put("/comm-points/:id", updateCommPoint(session, nc))
-	api.Delete("/comm-points/:id", deleteCommPoint(session))
+	api.Get("/comm-points", auth.RequirePermission(auth.PermCPView), listCommPoints(session))
+	api.Post("/comm-points", auth.RequirePermission(auth.PermCPManage), createCommPoint(session, nc))
+	api.Put("/comm-points/:id", auth.RequirePermission(auth.PermCPManage), updateCommPoint(session, nc))
+	api.Delete("/comm-points/:id", auth.RequirePermission(auth.PermCPManage), deleteCommPoint(session))
 
 	// --- Routes ---
-	api.Get("/routes", listRoutes(session))
-	api.Get("/routes/:id", getRoute(session))
-	api.Post("/routes", createRoute(session))
-	api.Put("/routes/:id", updateRoute(session))
-	api.Delete("/routes/:id", deleteRoute(session))
+	api.Get("/routes", auth.RequirePermission(auth.PermRouteView), listRoutes(session))
+	api.Get("/routes/:id", auth.RequirePermission(auth.PermRouteView), getRoute(session))
+	api.Post("/routes", auth.RequirePermission(auth.PermRouteManage), createRoute(session))
+	api.Put("/routes/:id", auth.RequirePermission(auth.PermRouteManage), updateRoute(session))
+	api.Delete("/routes/:id", auth.RequirePermission(auth.PermRouteManage), deleteRoute(session))
 
 	// --- Filters ---
-	api.Get("/routes/:id/filters", listFilters(session))
-	api.Post("/routes/:id/filters", createFilter(session))
-	api.Put("/filters/:id", updateFilter(session))
-	api.Delete("/routes/:routeId/filters/:order", deleteFilter(session))
+	api.Get("/routes/:id/filters", auth.RequirePermission(auth.PermRouteView), listFilters(session))
+	api.Post("/routes/:id/filters", auth.RequirePermission(auth.PermRouteManage), createFilter(session))
+	api.Put("/filters/:id", auth.RequirePermission(auth.PermRouteManage), updateFilter(session))
+	api.Delete("/routes/:routeId/filters/:order", auth.RequirePermission(auth.PermRouteManage), deleteFilter(session))
 
 	// --- Lookup Tables ---
-	api.Get("/lookups", listLookupTables(session))
-	api.Post("/lookups", createLookupTable(session))
-	api.Get("/lookups/:id/entries", listLookupEntries(session))
-	api.Put("/lookups/:id/entries", upsertLookupEntry(session))
+	api.Get("/lookups", auth.RequirePermission(auth.PermRouteView), listLookupTables(session))
+	api.Post("/lookups", auth.RequirePermission(auth.PermRouteManage), createLookupTable(session))
+	api.Get("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteView), listLookupEntries(session))
+	api.Put("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteManage), upsertLookupEntry(session))
 
-	// --- Messages ---
-	api.Get("/messages", listMessages(session))
-	api.Get("/messages/:id", getMessage(session))
-	api.Get("/messages/status/:status", listMessagesByStatus(session))
-	api.Get("/messages/patient/:patientId", listMessagesByPatient(session))
+	// --- Messages (PHI - restricted) ---
+	api.Get("/messages", auth.RequireAnyPermission(auth.PermMessageView, auth.PermMessageViewSandbox), listMessages(session))
+	api.Get("/messages/:id", auth.RequireAnyPermission(auth.PermMessageView, auth.PermMessageViewSandbox), getMessage(session))
+	api.Get("/messages/status/:status", auth.RequireAnyPermission(auth.PermMessageView, auth.PermMessageViewSandbox), listMessagesByStatus(session))
+	api.Get("/messages/patient/:patientId", auth.RequirePermission(auth.PermMessageView), listMessagesByPatient(session))
 
 	// --- Errors / DLQ ---
-	api.Get("/errors", listErrors(session))
+	api.Get("/errors", auth.RequirePermission(auth.PermErrorView), listErrors(session))
 
 	// --- Stats ---
-	api.Get("/stats", getStats(session))
+	api.Get("/stats", auth.RequirePermission(auth.PermMetricsView), getStats(session))
 
-	// --- Live Metrics (from running services via NATS) ---
-	api.Get("/metrics", getLiveMetrics(nc))
-	api.Get("/metrics/comm-points", getCPMetrics(nc))
-	api.Get("/metrics/comm-points/:id/logs", getCPLogs(nc))
+	// --- Config Backup & Restore ---
+	api.Get("/config/export", auth.RequirePermission(auth.PermConfigManage), configExport(session))
+	api.Post("/config/import", auth.RequirePermission(auth.PermConfigManage), configImport(session))
+	api.Get("/config/backups", auth.RequirePermission(auth.PermConfigView), listBackups(session))
+	api.Post("/config/backups", auth.RequirePermission(auth.PermConfigManage), createBackup(session))
+	api.Get("/config/history", auth.RequirePermission(auth.PermConfigView), configHistory(session))
+
+	// --- Retention ---
+	api.Get("/config/retention", auth.RequirePermission(auth.PermConfigView), getRetentionConfig(session))
+	api.Put("/config/retention", auth.RequirePermission(auth.PermConfigManage), updateRetentionConfig(session))
+
+	// --- Live Metrics ---
+	api.Get("/metrics", auth.RequirePermission(auth.PermMetricsView), getLiveMetrics(nc))
+	api.Get("/metrics/comm-points", auth.RequirePermission(auth.PermMetricsView), getCPMetrics(nc))
+	api.Get("/metrics/comm-points/:id/logs", auth.RequirePermission(auth.PermMetricsView), getCPLogs(nc))
 
 	// --- Tunnel Mesh ---
-	api.Get("/tunnel/nodes", listTunnelNodes(session))
-	api.Post("/tunnel/nodes", createTunnelNode(session))
-	api.Delete("/tunnel/nodes/:id", deleteTunnelNode(session))
-	api.Post("/tunnel/nodes/:id/push-config", pushTunnelConfigHandler(session, nc))
+	api.Get("/tunnel/nodes", auth.RequirePermission(auth.PermTunnelView), listTunnelNodes(session))
+	api.Post("/tunnel/nodes", auth.RequirePermission(auth.PermTunnelManage), createTunnelNode(session))
+	api.Delete("/tunnel/nodes/:id", auth.RequirePermission(auth.PermTunnelManage), deleteTunnelNode(session))
+	api.Post("/tunnel/nodes/:id/push-config", auth.RequirePermission(auth.PermTunnelManage), pushTunnelConfigHandler(session, nc))
 
 	// --- JS Filter Playground ---
-	api.Post("/playground/execute", executePlayground(nc))
+	api.Post("/playground/execute", auth.RequirePermission(auth.PermPlayground), executePlayground(nc))
+
+	// --- User Management (security role) ---
+	api.Get("/users", auth.RequirePermission(auth.PermUserView), listUsers(session))
+	api.Post("/users", auth.RequirePermission(auth.PermUserManage), createUser(session))
+	api.Put("/users/:id/role", auth.RequirePermission(auth.PermUserManage), updateUserRole(session))
+	api.Delete("/users/:id", auth.RequirePermission(auth.PermUserManage), deleteUser(session))
+	api.Get("/roles", auth.RequirePermission(auth.PermUserView), listRoles())
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -722,6 +741,315 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// ==================== Config Export/Import ====================
+
+func configExport(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		export := fiber.Map{}
+
+		// Export comm points
+		var cps []fiber.Map
+		iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, tunnel_enabled, tunnel_node_id, tunnel_local_port FROM arteria.communication_points`).Iter()
+		var id, tnID gocql.UUID
+		var name, dir, proto, host string
+		var port, mr, rd, to, tlp int
+		var active, te bool
+		for iter.Scan(&id, &name, &dir, &proto, &host, &port, &active, &mr, &rd, &to, &te, &tnID, &tlp) {
+			cps = append(cps, fiber.Map{"comm_point_id": id.String(), "name": name, "direction": dir, "protocol": proto, "host": host, "port": port, "is_active": active, "max_retries": mr, "retry_delay_ms": rd, "timeout_ms": to, "tunnel_enabled": te, "tunnel_node_id": tnID.String(), "tunnel_local_port": tlp})
+		}
+		iter.Close()
+		export["communication_points"] = cps
+
+		// Export routes
+		var routes []fiber.Map
+		rIter := session.Query(`SELECT route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, retention_days FROM arteria.routes`).Iter()
+		var rID, srcCP, dstCP gocql.UUID
+		var rName, desc, srcT, dstT string
+		var rActive bool
+		var retDays int
+		for rIter.Scan(&rID, &rName, &desc, &srcCP, &dstCP, &srcT, &dstT, &rActive, &retDays) {
+			routes = append(routes, fiber.Map{"route_id": rID.String(), "name": rName, "description": desc, "source_comm_point_id": srcCP.String(), "dest_comm_point_id": dstCP.String(), "source_topic": srcT, "destination_topic": dstT, "is_active": rActive, "retention_days": retDays})
+		}
+		rIter.Close()
+		export["routes"] = routes
+
+		// Export filters
+		var filters []fiber.Map
+		fIter := session.Query(`SELECT filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active FROM arteria.filters_by_id`).Iter()
+		var fID, fRouteID gocql.UUID
+		var fName, fType, fJS, fCfg string
+		var fOrder int
+		var fActive bool
+		for fIter.Scan(&fID, &fRouteID, &fName, &fType, &fOrder, &fJS, &fCfg, &fActive) {
+			filters = append(filters, fiber.Map{"filter_id": fID.String(), "route_id": fRouteID.String(), "name": fName, "filter_type": fType, "execution_order": fOrder, "js_script": fJS, "config_json": fCfg, "is_active": fActive})
+		}
+		fIter.Close()
+		export["filters"] = filters
+
+		// Export lookup tables + entries
+		var lookups []fiber.Map
+		lIter := session.Query(`SELECT table_id, name, description FROM arteria.lookup_tables`).Iter()
+		var lID gocql.UUID
+		var lName, lDesc string
+		for lIter.Scan(&lID, &lName, &lDesc) {
+			// Get entries for this table
+			var entries []fiber.Map
+			eIter := session.Query(`SELECT lookup_key, lookup_value FROM arteria.lookup_entries WHERE table_id = ?`, lID).Iter()
+			var k, v string
+			for eIter.Scan(&k, &v) {
+				entries = append(entries, fiber.Map{"key": k, "value": v})
+			}
+			eIter.Close()
+			lookups = append(lookups, fiber.Map{"table_id": lID.String(), "name": lName, "description": lDesc, "entries": entries})
+		}
+		lIter.Close()
+		export["lookup_tables"] = lookups
+
+		// Export tunnel nodes
+		var nodes []fiber.Map
+		nIter := session.Query(`SELECT node_id, name, site_name, status FROM arteria.tunnel_nodes`).Iter()
+		var nID gocql.UUID
+		var nName, nSite, nStatus string
+		for nIter.Scan(&nID, &nName, &nSite, &nStatus) {
+			nodes = append(nodes, fiber.Map{"node_id": nID.String(), "name": nName, "site_name": nSite, "status": nStatus})
+		}
+		nIter.Close()
+		export["tunnel_nodes"] = nodes
+
+		export["exported_at"] = time.Now().UTC().Format(time.RFC3339)
+		export["version"] = "1.0"
+
+		return c.JSON(export)
+	}
+}
+
+func configImport(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body map[string]interface{}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid JSON body"})
+		}
+
+		imported := 0
+
+		// Import comm points
+		if cps, ok := body["communication_points"].([]interface{}); ok {
+			for _, cp := range cps {
+				m := cp.(map[string]interface{})
+				cpID, _ := gocql.ParseUUID(m["comm_point_id"].(string))
+				tnID, _ := gocql.ParseUUID(strVal(m, "tunnel_node_id"))
+				session.Query(`INSERT INTO arteria.communication_points (comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, tunnel_enabled, tunnel_node_id, tunnel_local_port, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+					cpID, m["name"], m["direction"], m["protocol"], m["host"], intVal(m, "port"), boolVal(m, "is_active"), intVal(m, "max_retries"), intVal(m, "retry_delay_ms"), intVal(m, "timeout_ms"), boolVal(m, "tunnel_enabled"), tnID, intVal(m, "tunnel_local_port"), time.Now(), time.Now()).Exec()
+				imported++
+			}
+		}
+
+		// Import routes
+		if routes, ok := body["routes"].([]interface{}); ok {
+			for _, r := range routes {
+				m := r.(map[string]interface{})
+				rID, _ := gocql.ParseUUID(m["route_id"].(string))
+				srcCP, _ := gocql.ParseUUID(strVal(m, "source_comm_point_id"))
+				dstCP, _ := gocql.ParseUUID(strVal(m, "dest_comm_point_id"))
+				session.Query(`INSERT INTO arteria.routes (route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, retention_days, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+					rID, m["name"], m["description"], srcCP, dstCP, m["source_topic"], m["destination_topic"], boolVal(m, "is_active"), intVal(m, "retention_days"), time.Now(), time.Now()).Exec()
+				imported++
+			}
+		}
+
+		// Import filters
+		if filters, ok := body["filters"].([]interface{}); ok {
+			for _, f := range filters {
+				m := f.(map[string]interface{})
+				fID, _ := gocql.ParseUUID(m["filter_id"].(string))
+				rID, _ := gocql.ParseUUID(m["route_id"].(string))
+				order := intVal(m, "execution_order")
+				session.Query(`INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+					fID, rID, m["name"], m["filter_type"], order, m["js_script"], m["config_json"], boolVal(m, "is_active"), time.Now()).Exec()
+				session.Query(`INSERT INTO arteria.filters_by_id (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+					fID, rID, m["name"], m["filter_type"], order, m["js_script"], m["config_json"], boolVal(m, "is_active"), time.Now()).Exec()
+				imported++
+			}
+		}
+
+		return c.JSON(fiber.Map{"status": "imported", "items": imported})
+	}
+}
+
+func listBackups(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var items []fiber.Map
+		iter := session.Query(`SELECT backup_id, name, description, created_by, created_at FROM arteria.config_backups`).Iter()
+		var bID gocql.UUID
+		var bName, bDesc, bBy string
+		var bAt time.Time
+		for iter.Scan(&bID, &bName, &bDesc, &bBy, &bAt) {
+			items = append(items, fiber.Map{"backup_id": bID.String(), "name": bName, "description": bDesc, "created_by": bBy, "created_at": bAt})
+		}
+		iter.Close()
+		if items == nil {
+			items = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"backups": items, "count": len(items)})
+	}
+}
+
+func createBackup(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+
+		var body struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			body.Name = "Manual backup"
+		}
+		if body.Name == "" {
+			body.Name = "Backup " + time.Now().Format("2006-01-02 15:04")
+		}
+
+		// Generate full export
+		exportData := exportAllConfig(session)
+		exportJSON, _ := json.Marshal(exportData)
+
+		bID := gocql.TimeUUID()
+		session.Query(`INSERT INTO arteria.config_backups (backup_id, name, description, backup_json, created_by, created_at) VALUES (?,?,?,?,?,?)`,
+			bID, body.Name, body.Description, string(exportJSON), claims.Username, time.Now()).Exec()
+
+		return c.Status(201).JSON(fiber.Map{"backup_id": bID.String(), "name": body.Name, "size_bytes": len(exportJSON)})
+	}
+}
+
+func configHistory(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		entityType := c.Query("type", "")
+		limit := c.QueryInt("limit", 50)
+
+		var items []fiber.Map
+		var iter *gocql.Iter
+		if entityType != "" {
+			iter = session.Query(`SELECT change_id, entity_type, entity_id, action, changed_by, created_at FROM arteria.config_history WHERE entity_type = ? LIMIT ?`, entityType, limit).Iter()
+		} else {
+			// Can't do cross-partition without ALLOW FILTERING, return empty with hint
+			return c.JSON(fiber.Map{"history": []fiber.Map{}, "hint": "specify ?type=route|filter|comm_point|tunnel_node|lookup"})
+		}
+
+		var cID, eID gocql.UUID
+		var eType, action, changedBy string
+		var createdAt time.Time
+		for iter.Scan(&cID, &eType, &eID, &action, &changedBy, &createdAt) {
+			items = append(items, fiber.Map{"change_id": cID.String(), "entity_type": eType, "entity_id": eID.String(), "action": action, "changed_by": changedBy, "created_at": createdAt})
+		}
+		iter.Close()
+		if items == nil {
+			items = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"history": items, "count": len(items)})
+	}
+}
+
+func getRetentionConfig(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"global": fiber.Map{
+				"messages_ttl_days":       30,
+				"error_messages_ttl_days": 90,
+				"config_history_ttl_days": 365,
+			},
+			"info": "Global TTL is set at the ScyllaDB table level. Per-route retention_days overrides at insert time.",
+		})
+	}
+}
+
+func updateRetentionConfig(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			MessagesTTLDays int `json:"messages_ttl_days"`
+			ErrorsTTLDays   int `json:"error_messages_ttl_days"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		if body.MessagesTTLDays > 0 {
+			ttlSec := body.MessagesTTLDays * 86400
+			session.Query(fmt.Sprintf("ALTER TABLE arteria.messages WITH default_time_to_live = %d", ttlSec)).Exec()
+			session.Query(fmt.Sprintf("ALTER TABLE arteria.messages_by_patient WITH default_time_to_live = %d", ttlSec)).Exec()
+			session.Query(fmt.Sprintf("ALTER TABLE arteria.messages_by_status WITH default_time_to_live = %d", ttlSec)).Exec()
+		}
+		if body.ErrorsTTLDays > 0 {
+			ttlSec := body.ErrorsTTLDays * 86400
+			session.Query(fmt.Sprintf("ALTER TABLE arteria.error_messages WITH default_time_to_live = %d", ttlSec)).Exec()
+		}
+
+		return c.JSON(fiber.Map{"status": "updated", "messages_ttl_days": body.MessagesTTLDays, "error_messages_ttl_days": body.ErrorsTTLDays})
+	}
+}
+
+// Helper to export all config (used by backup and export endpoints)
+func exportAllConfig(session *gocql.Session) map[string]interface{} {
+	export := map[string]interface{}{
+		"exported_at": time.Now().UTC().Format(time.RFC3339),
+		"version":     "1.0",
+	}
+
+	// Simplified — reuses the same logic as configExport
+	var cps []map[string]interface{}
+	iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active FROM arteria.communication_points`).Iter()
+	var id gocql.UUID
+	var name, dir, proto, host string
+	var port int
+	var active bool
+	for iter.Scan(&id, &name, &dir, &proto, &host, &port, &active) {
+		cps = append(cps, map[string]interface{}{"comm_point_id": id.String(), "name": name, "direction": dir, "protocol": proto, "host": host, "port": port, "is_active": active})
+	}
+	iter.Close()
+	export["communication_points"] = cps
+
+	var routes []map[string]interface{}
+	rIter := session.Query(`SELECT route_id, name, description, source_topic, destination_topic, is_active FROM arteria.routes`).Iter()
+	var rID gocql.UUID
+	var rName, desc, srcT, dstT string
+	var rActive bool
+	for rIter.Scan(&rID, &rName, &desc, &srcT, &dstT, &rActive) {
+		routes = append(routes, map[string]interface{}{"route_id": rID.String(), "name": rName, "description": desc, "source_topic": srcT, "destination_topic": dstT, "is_active": rActive})
+	}
+	rIter.Close()
+	export["routes"] = routes
+
+	return export
+}
+
+// Type conversion helpers for import
+func strVal(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok && v != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return ""
+}
+
+func intVal(m map[string]interface{}, key string) int {
+	if v, ok := m[key]; ok && v != nil {
+		switch t := v.(type) {
+		case float64:
+			return int(t)
+		case int:
+			return t
+		}
+	}
+	return 0
+}
+
+func boolVal(m map[string]interface{}, key string) bool {
+	if v, ok := m[key]; ok && v != nil {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 // ==================== Authentication ====================
 
 func authMiddleware(jwtSecret string) fiber.Handler {
@@ -1042,5 +1370,122 @@ func executePlayground(nc *nats.Conn) fiber.Handler {
 		var result map[string]interface{}
 		json.Unmarshal(resp.Data, &result)
 		return c.JSON(result)
+	}
+}
+
+// ==================== User Management ====================
+
+func listUsers(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var items []fiber.Map
+		iter := session.Query(`SELECT user_id, username, role, is_active, created_at FROM arteria.users`).Iter()
+		var id gocql.UUID
+		var username, role string
+		var isActive bool
+		var createdAt time.Time
+		for iter.Scan(&id, &username, &role, &isActive, &createdAt) {
+			items = append(items, fiber.Map{
+				"user_id": id.String(), "username": username, "role": role,
+				"is_active": isActive, "created_at": createdAt,
+			})
+		}
+		iter.Close()
+		if items == nil {
+			items = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"users": items, "count": len(items)})
+	}
+}
+
+func createUser(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Username == "" || body.Password == "" || body.Role == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "username, password, and role required"})
+		}
+		if len(body.Password) < 8 {
+			return c.Status(400).JSON(fiber.Map{"error": "password must be at least 8 characters"})
+		}
+		if !auth.HasPermission(body.Role, auth.PermMetricsView) && body.Role != "security" {
+			// Validate role exists
+			valid := false
+			for _, r := range auth.AllRoles() {
+				if r == body.Role {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return c.Status(400).JSON(fiber.Map{"error": "invalid role", "valid_roles": auth.AllRoles()})
+			}
+		}
+
+		hash, _ := auth.HashPassword(body.Password)
+		userID := gocql.TimeUUID()
+		if err := session.Query(`INSERT INTO arteria.users (user_id, username, password_hash, role, is_active, created_at) VALUES (?,?,?,?,?,?)`,
+			userID, body.Username, hash, body.Role, true, time.Now()).Exec(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.Status(201).JSON(fiber.Map{"user_id": userID.String(), "username": body.Username, "role": body.Role})
+	}
+}
+
+func updateUserRole(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid user ID"})
+		}
+		var body struct {
+			Role     string `json:"role"`
+			IsActive *bool  `json:"is_active"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Role != "" {
+			session.Query(`UPDATE arteria.users SET role = ? WHERE user_id = ?`, body.Role, id).Exec()
+		}
+		if body.IsActive != nil {
+			session.Query(`UPDATE arteria.users SET is_active = ? WHERE user_id = ?`, *body.IsActive, id).Exec()
+		}
+		return c.JSON(fiber.Map{"status": "updated"})
+	}
+}
+
+func deleteUser(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid user ID"})
+		}
+		session.Query(`DELETE FROM arteria.users WHERE user_id = ?`, id).Exec()
+		return c.JSON(fiber.Map{"status": "deleted"})
+	}
+}
+
+func listRoles() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		roles := make([]fiber.Map, 0)
+		for _, role := range auth.AllRoles() {
+			perms := auth.GetPermissions(role)
+			permStrings := make([]string, len(perms))
+			for i, p := range perms {
+				permStrings[i] = string(p)
+			}
+			roles = append(roles, fiber.Map{
+				"role":        role,
+				"permissions": permStrings,
+			})
+		}
+		return c.JSON(fiber.Map{"roles": roles})
 	}
 }
