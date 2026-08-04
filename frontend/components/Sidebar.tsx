@@ -15,6 +15,7 @@ import {
   Heart,
   Scan,
   LogOut,
+  Users,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
@@ -40,6 +41,7 @@ const allNav: NavItem[] = [
   { href: '/dicom', label: 'DICOM Nodes', icon: Scan, module: 'dicom', section: 'core' },
   { href: '/playground', label: 'JS Playground', icon: Code2, section: 'tools' },
   { href: '/errors', label: 'Errors / DLQ', icon: AlertTriangle, section: 'tools' },
+  { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
 ];
 
 export default function Sidebar() {
@@ -54,7 +56,12 @@ export default function Sidebar() {
       .catch(() => {});
   }, []);
 
-  const visibleNav = allNav.filter(item => !item.module || modules[item.module]);
+  const visibleNav = allNav.filter(item => {
+    if (!item.module) return true;
+    // RBAC page only visible to admin and security
+    if (item.module === 'rbac') return role === 'admin' || role === 'security';
+    return modules[item.module];
+  });
   const coreItems = visibleNav.filter(i => i.section === 'core');
   const toolItems = visibleNav.filter(i => i.section === 'tools');
   const protocols = [modules.hl7 && 'HL7v2', modules.fhir && 'FHIR', modules.dicom && 'DICOM'].filter(Boolean);
