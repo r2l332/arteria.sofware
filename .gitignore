@@ -1,0 +1,22 @@
+# Dependencies
+frontend/node_modules/
+backend/vendor/
+testing/harness
+
+# Build outputs
+frontend/.next/
+backend/api
+backend/cmd/*/main
+
+# Environment
+.env
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

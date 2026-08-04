@@ -1,0 +1,193 @@
+services:
+  nats:
+    image: nats:2-alpine
+    container_name: arteria-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  scylladb:
+    image: scylladb/scylla:latest
+    container_name: arteria-scylladb
+    ports:
+      - "9042:9042"
+      - "9160:9160"
+    command: ["--developer-mode", "1", "--smp", "1", "--memory", "512M"]
+    volumes:
+      - scylla_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  scylla-init:
+    image: scylladb/scylla:latest
+    container_name: arteria-scylla-init
+    depends_on:
+      scylladb:
+        condition: service_healthy
+    volumes:
+      - ./infra/cql:/cql
+      - ./infra/scripts:/scripts
+    entrypoint: ["/bin/bash", "/scripts/init-schema.sh"]
+    restart: "no"
+
+  ingestion:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ingestion
+    container_name: arteria-ingestion
+    ports:
+      - "2575:2575"
+    environment:
+      NATS_URL: nats://nats:4222
+      INGESTION_PORT: "2575"
+      LOG_LEVEL: ${LOG_LEVEL:-TRACE}
+      LOG_SINKS: ${LOG_SINKS:-stdout,file}
+      LOG_FILE: /var/log/arteria/ingestion.log
+    volumes:
+      - arteria_logs:/var/log/arteria
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  processing:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.processing
+    container_name: arteria-processing
+    environment:
+      NATS_URL: nats://nats:4222
+      SCYLLA_HOST: scylladb
+      LOG_LEVEL: ${LOG_LEVEL:-TRACE}
+      LOG_SINKS: ${LOG_SINKS:-stdout,file}
+      LOG_FILE: /var/log/arteria/processing.log
+      LOG_HTTP_URL: ${LOG_HTTP_URL:-}
+      LOG_HTTP_HEADERS: ${LOG_HTTP_HEADERS:-}
+    volumes:
+      - arteria_logs:/var/log/arteria
+    depends_on:
+      nats:
+        condition: service_healthy
+      scylla-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.api
+    container_name: arteria-api
+    ports:
+      - "8080:8080"
+    environment:
+      SCYLLA_HOST: scylladb
+      API_PORT: "8080"
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: ${LOG_LEVEL:-TRACE}
+      LOG_SINKS: ${LOG_SINKS:-stdout,file}
+      LOG_FILE: /var/log/arteria/api.log
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-arteriadeployment}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      MODULE_HL7: ${MODULE_HL7:-true}
+      MODULE_FHIR: ${MODULE_FHIR:-false}
+      MODULE_DICOM: ${MODULE_DICOM:-false}
+      MODULE_TUNNEL: ${MODULE_TUNNEL:-true}
+    volumes:
+      - arteria_logs:/var/log/arteria
+    depends_on:
+      nats:
+        condition: service_healthy
+      scylla-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8080/api/v1}
+    container_name: arteria-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${API_URL:-http://localhost:8080/api/v1}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # --- Tunnel Broker ---
+  tunnel-broker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.tunnel-broker
+    container_name: arteria-tunnel-broker
+    ports:
+      - "9443:9443"
+    environment:
+      BROKER_LISTEN: ":9443"
+      SCYLLA_HOST: scylladb
+      NATS_URL: nats://nats:4222
+      CA_DIR: /data/ca
+    volumes:
+      - tunnel_ca:/data/ca
+    depends_on:
+      nats:
+        condition: service_healthy
+      scylla-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # --- Testing Harness ---
+  # Run tests:        docker compose run --rm test-runner all
+  # Run specific:     docker compose run --rm test-runner ingest
+  # Run load test:    docker compose run --rm test-runner load 5000
+  # Send HL7 file:    docker compose run --rm test-runner send /scenarios/sample_adt_a01.hl7
+  test-runner:
+    build:
+      context: ./testing
+    container_name: arteria-test-runner
+    environment:
+      ARTERIA_MLLP_HOST: ingestion
+      ARTERIA_API_URL: http://api:8080
+    depends_on:
+      - ingestion
+      - processing
+      - api
+    profiles:
+      - test
+    restart: "no"
+
+  # MLLP receiver — acts as a downstream system for egress testing
+  # Start:  docker compose --profile test up -d test-receiver
+  test-receiver:
+    build:
+      context: ./testing
+    container_name: arteria-test-receiver
+    ports:
+      - "2576:2576"
+    environment:
+      RECEIVER_PORT: "2576"
+    entrypoint: ["/usr/local/bin/harness", "server"]
+    profiles:
+      - test
+    restart: unless-stopped
+
+volumes:
+  nats_data:
+  scylla_data:
+  arteria_logs:
+  tunnel_ca:

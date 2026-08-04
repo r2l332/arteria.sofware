@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  body {
+    @apply bg-arteria-bg text-arteria-text font-sans antialiased;
+  }
+  
+  * {
+    @apply border-arteria-border;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-zinc-700 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-600;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-arteria-card border border-arteria-border rounded-xl transition-all duration-200;
+  }
+  .card:hover {
+    @apply border-arteria-border-hover;
+  }
+  .card-header {
+    @apply px-5 py-4 border-b border-arteria-border;
+  }
+  .btn-primary {
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-arteria-accent text-white text-sm font-medium rounded-lg hover:bg-arteria-accent-hover transition-colors duration-150;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center gap-2 px-4 py-2 border border-arteria-border text-arteria-text-secondary text-sm font-medium rounded-lg hover:bg-arteria-card hover:text-white hover:border-arteria-border-hover transition-all duration-150;
+  }
+  .input {
+    @apply w-full px-3 py-2 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-arteria-accent focus:border-arteria-accent transition-all duration-150;
+  }
+  .select {
+    @apply w-full px-3 py-2 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white focus:outline-none focus:ring-1 focus:ring-arteria-accent focus:border-arteria-accent transition-all duration-150;
+  }
+  .label {
+    @apply block text-xs font-medium text-arteria-text-secondary mb-1.5;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium;
+  }
+}
