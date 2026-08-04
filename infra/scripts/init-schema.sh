@@ -15,7 +15,12 @@ echo "ScyllaDB is ready. Applying schemas..."
 
 for cql_file in "$CQL_DIR"/*.cql; do
   echo "  Applying: $(basename "$cql_file")"
-  cqlsh "$SCYLLA_HOST" "$SCYLLA_PORT" -f "$cql_file"
+  if [[ "$(basename "$cql_file")" == 007_* ]]; then
+    # Migration files may fail on re-run (e.g., column already exists) — tolerate errors
+    cqlsh "$SCYLLA_HOST" "$SCYLLA_PORT" -f "$cql_file" 2>/dev/null || true
+  else
+    cqlsh "$SCYLLA_HOST" "$SCYLLA_PORT" -f "$cql_file"
+  fi
 done
 
 echo "Schema initialization complete."

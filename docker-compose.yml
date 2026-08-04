@@ -100,7 +100,7 @@ services:
       LOG_FILE: /var/log/arteria/api.log
       JWT_SECRET: ${JWT_SECRET:-}
       ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASS: ${ADMIN_PASS:-arteriadeployment}
+      ADMIN_PASS: ${ADMIN_PASS:-arteria123}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       MODULE_HL7: ${MODULE_HL7:-true}
       MODULE_FHIR: ${MODULE_FHIR:-false}
@@ -183,7 +183,7 @@ services:
     environment:
       API_URL: http://api:8080
       ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASS: ${ADMIN_PASS:-arteriadeployment}
+      ADMIN_PASS: ${ADMIN_PASS:-arteria123}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
     volumes:
       - arteria_backups:/backups

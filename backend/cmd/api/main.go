@@ -62,7 +62,7 @@ func main() {
 		JWTSecret:   jwtSecret,
 		TokenExpiry: 24 * time.Hour,
 		DefaultUser: envOrDefault("ADMIN_USER", "admin"),
-		DefaultPass: envOrDefault("ADMIN_PASS", "arteria"),
+		DefaultPass: envOrDefault("ADMIN_PASS", "arteria123"),
 	}
 
 	// Create default admin user if none exist

@@ -18,6 +18,8 @@ cd arteria.app
 docker compose up -d
 ```
 
+**Default credentials:** `admin` / `arteria123` — you will be prompted to set a new password on first login.
+
 This starts 6 containers:
 
 | Container | Image | Purpose |

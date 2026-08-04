@@ -150,7 +150,7 @@ docker compose up -d
 
 # Dashboard:  https://localhost  (self-signed cert auto-generated)
 # API:        https://localhost/api/v1
-# Login:      admin / arteriadeployment
+# Login:      admin / arteria123  (you will be prompted to change on first login)
 
 # Send a test HL7 message:
 printf '\x0bMSH|^~\\&|SRC|HOSP|DST|FAC|202608040800||ADT^A01|123|P|2.3\rPID|||PAT001||Doe^John\x1c\r' \
@@ -191,7 +191,7 @@ printf '\x0bMSH|^~\\&|SRC|HOSP|DST|FAC|202608040800||ADT^A01|123|P|2.3\rPID|||PA
 # .env
 DOMAIN=arteria.software           # Caddy auto-provisions Let's Encrypt cert
 TLS_EMAIL=admin@arteria.software  # Let's Encrypt contact
-ADMIN_PASS=your-secure-password   # Default admin password
+ADMIN_PASS=arteria123             # Default admin password (forced change on first login)
 JWT_SECRET=your-secret            # Persistent JWT signing key
 LOG_LEVEL=INFO                    # TRACE|DEBUG|INFO|WARN|ERROR|FATAL
 MODULE_HL7=true                   # Enable HL7v2 module

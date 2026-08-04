@@ -4,7 +4,7 @@
 
 API_URL="${API_URL:-http://api:8080}"
 ADMIN_USER="${ADMIN_USER:-admin}"
-ADMIN_PASS="${ADMIN_PASS:-arteriadeployment}"
+ADMIN_PASS="${ADMIN_PASS:-arteria123}"
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
 
