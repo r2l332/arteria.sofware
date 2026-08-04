@@ -440,21 +440,57 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-## 11. Tunnel Mesh Deployment
+## 11. Aorta Mesh Deployment (Capillary Agents)
 
-### Agent Deployment at Remote Site
+### Option 1: Standalone Binary (Recommended)
+
+No Docker required at the remote site. Download the single Capillary binary:
 
 ```bash
-# 1. Create node in Arteria dashboard → get enrollment token
-# 2. Deploy agent:
-docker run -d --name arteria-node \
+# Download for your platform (linux/amd64, linux/arm64, windows/amd64, darwin/*)
+curl -LO https://github.com/r2l332/arteria.app/releases/download/v0.1.0/capillary-0.1.0-linux-amd64
+chmod +x capillary-0.1.0-linux-amd64
+mv capillary-0.1.0-linux-amd64 /usr/local/bin/capillary
+
+# 1. Create node in Arteria dashboard (Aorta Mesh page) → get enrollment token
+# 2. Enroll the Capillary agent:
+capillary enroll <token> --broker arteria.software:9443
+
+# 3. Connect and start tunneling:
+capillary connect --broker arteria.software:9443
+```
+
+Run as a systemd service:
+
+```ini
+# /etc/systemd/system/capillary.service
+[Unit]
+Description=Arteria Capillary Agent
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/capillary connect --broker arteria.software:9443
+Restart=always
+RestartSec=5
+Environment=AGENT_CONFIG_DIR=/etc/arteria-agent
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Option 2: Docker Deployment
+
+```bash
+# Enroll:
+docker run -d --name capillary \
   --restart unless-stopped \
   -v /opt/arteria-agent:/etc/arteria-agent \
   -e BROKER_ADDR=arteria.software:9443 \
   -p 2575:2575 \
   arteria-agent enroll <token>
 
-docker run -d --name arteria-node \
+# Connect:
+docker run -d --name capillary \
   --restart unless-stopped \
   -v /opt/arteria-agent:/etc/arteria-agent \
   -e BROKER_ADDR=arteria.software:9443 \
@@ -476,9 +512,9 @@ docker run -d --name arteria-node \
 | Location | Port | Direction | Purpose |
 |----------|------|-----------|---------|
 | Arteria (cloud) | 443 | Inbound | Dashboard + API (HTTPS) |
-| Arteria (cloud) | 9443 | Inbound | Tunnel broker (agent connections) |
-| Agent (hospital) | — | Outbound to :9443 | Agent connects to broker |
-| Agent (hospital) | 2575+ | Local | HL7 apps send to agent |
+| Arteria (cloud) | 9443 | Inbound | Aorta broker (Capillary connections) |
+| Capillary (hospital) | — | Outbound to :9443 | Capillary connects to Aorta |
+| Capillary (hospital) | 2575+ | Local | HL7 apps send to Capillary |
 
 ---
 

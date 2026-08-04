@@ -123,12 +123,14 @@ func main() {
 	})
 
 	// --- Module Configuration ---
+	enabledPlugins := envOrDefault("ENABLE_PLUGINS", "routes-js")
 	api.Get("/config/modules", func(c *fiber.Ctx) error {
 		modules := fiber.Map{
-			"hl7":    envOrDefault("MODULE_HL7", "true") == "true",
-			"fhir":   envOrDefault("MODULE_FHIR", "false") == "true",
-			"dicom":  envOrDefault("MODULE_DICOM", "false") == "true",
-			"tunnel": envOrDefault("MODULE_TUNNEL", "true") == "true",
+			"hl7":       envOrDefault("MODULE_HL7", "true") == "true",
+			"fhir":      envOrDefault("MODULE_FHIR", "false") == "true",
+			"dicom":     envOrDefault("MODULE_DICOM", "false") == "true",
+			"tunnel":    envOrDefault("MODULE_TUNNEL", "true") == "true",
+			"routes-js": strings.Contains(enabledPlugins, "routes-js"),
 		}
 		return c.JSON(fiber.Map{"modules": modules})
 	})
@@ -139,24 +141,27 @@ func main() {
 	api.Put("/comm-points/:id", auth.RequirePermission(auth.PermCPManage), updateCommPoint(session, nc))
 	api.Delete("/comm-points/:id", auth.RequirePermission(auth.PermCPManage), deleteCommPoint(session))
 
-	// --- Routes ---
-	api.Get("/routes", auth.RequirePermission(auth.PermRouteView), listRoutes(session))
-	api.Get("/routes/:id", auth.RequirePermission(auth.PermRouteView), getRoute(session))
-	api.Post("/routes", auth.RequirePermission(auth.PermRouteManage), createRoute(session))
-	api.Put("/routes/:id", auth.RequirePermission(auth.PermRouteManage), updateRoute(session))
-	api.Delete("/routes/:id", auth.RequirePermission(auth.PermRouteManage), deleteRoute(session))
+	// --- Routes, Filters, Lookups, Playground (plugin: routes-js) ---
+	if strings.Contains(enabledPlugins, "routes-js") {
+		api.Get("/routes", auth.RequirePermission(auth.PermRouteView), listRoutes(session))
+		api.Get("/routes/:id", auth.RequirePermission(auth.PermRouteView), getRoute(session))
+		api.Post("/routes", auth.RequirePermission(auth.PermRouteManage), createRoute(session))
+		api.Put("/routes/:id", auth.RequirePermission(auth.PermRouteManage), updateRoute(session))
+		api.Delete("/routes/:id", auth.RequirePermission(auth.PermRouteManage), deleteRoute(session))
 
-	// --- Filters ---
-	api.Get("/routes/:id/filters", auth.RequirePermission(auth.PermRouteView), listFilters(session))
-	api.Post("/routes/:id/filters", auth.RequirePermission(auth.PermRouteManage), createFilter(session))
-	api.Put("/filters/:id", auth.RequirePermission(auth.PermRouteManage), updateFilter(session))
-	api.Delete("/routes/:routeId/filters/:order", auth.RequirePermission(auth.PermRouteManage), deleteFilter(session))
+		api.Get("/routes/:id/filters", auth.RequirePermission(auth.PermRouteView), listFilters(session))
+		api.Post("/routes/:id/filters", auth.RequirePermission(auth.PermRouteManage), createFilter(session))
+		api.Put("/filters/:id", auth.RequirePermission(auth.PermRouteManage), updateFilter(session))
+		api.Delete("/routes/:routeId/filters/:order", auth.RequirePermission(auth.PermRouteManage), deleteFilter(session))
 
-	// --- Lookup Tables ---
-	api.Get("/lookups", auth.RequirePermission(auth.PermRouteView), listLookupTables(session))
-	api.Post("/lookups", auth.RequirePermission(auth.PermRouteManage), createLookupTable(session))
-	api.Get("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteView), listLookupEntries(session))
-	api.Put("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteManage), upsertLookupEntry(session))
+		api.Get("/lookups", auth.RequirePermission(auth.PermRouteView), listLookupTables(session))
+		api.Post("/lookups", auth.RequirePermission(auth.PermRouteManage), createLookupTable(session))
+		api.Get("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteView), listLookupEntries(session))
+		api.Put("/lookups/:id/entries", auth.RequirePermission(auth.PermRouteManage), upsertLookupEntry(session))
+
+		api.Post("/playground/execute", auth.RequirePermission(auth.PermPlayground), executePlayground(nc))
+		log.Info("plugin routes registered", logging.Fields{"plugin": "routes-js"})
+	}
 
 	// --- Messages (PHI - restricted) ---
 	api.Get("/messages", auth.RequireAnyPermission(auth.PermMessageView, auth.PermMessageViewSandbox), listMessages(session))
@@ -191,9 +196,6 @@ func main() {
 	api.Post("/tunnel/nodes", auth.RequirePermission(auth.PermTunnelManage), createTunnelNode(session))
 	api.Delete("/tunnel/nodes/:id", auth.RequirePermission(auth.PermTunnelManage), deleteTunnelNode(session))
 	api.Post("/tunnel/nodes/:id/push-config", auth.RequirePermission(auth.PermTunnelManage), pushTunnelConfigHandler(session, nc))
-
-	// --- JS Filter Playground ---
-	api.Post("/playground/execute", auth.RequirePermission(auth.PermPlayground), executePlayground(nc))
 
 	// --- User Management (security role) ---
 	api.Get("/users", auth.RequirePermission(auth.PermUserView), listUsers(session))
@@ -245,6 +247,16 @@ func main() {
 
 func listCommPoints(session *gocql.Session) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		// Pre-load tunnel node names for enrichment
+		nodeNames := make(map[string]fiber.Map)
+		nIter := session.Query(`SELECT node_id, name, site_name, status FROM arteria.tunnel_nodes`).Iter()
+		var nID gocql.UUID
+		var nName, nSite, nStatus string
+		for nIter.Scan(&nID, &nName, &nSite, &nStatus) {
+			nodeNames[nID.String()] = fiber.Map{"name": nName, "site_name": nSite, "status": nStatus}
+		}
+		nIter.Close()
+
 		var items []fiber.Map
 		iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, tunnel_enabled, tunnel_node_id, tunnel_local_port FROM arteria.communication_points`).Iter()
 		var id, tunnelNodeID gocql.UUID
@@ -258,8 +270,14 @@ func listCommPoints(session *gocql.Session) fiber.Handler {
 				"max_retries": maxRetries, "retry_delay_ms": retryDelay, "timeout_ms": timeout,
 				"tunnel_enabled": tunnelEnabled, "tunnel_local_port": tunnelLocalPort,
 			}
-			if tunnelNodeID.String() != "00000000-0000-0000-0000-000000000000" {
-				item["tunnel_node_id"] = tunnelNodeID.String()
+			nodeIDStr := tunnelNodeID.String()
+			if nodeIDStr != "00000000-0000-0000-0000-000000000000" {
+				item["tunnel_node_id"] = nodeIDStr
+				if node, ok := nodeNames[nodeIDStr]; ok {
+					item["capillary_name"] = node["name"]
+					item["capillary_site"] = node["site_name"]
+					item["capillary_status"] = node["status"]
+				}
 			}
 			items = append(items, item)
 		}

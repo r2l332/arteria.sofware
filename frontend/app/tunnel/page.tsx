@@ -89,22 +89,22 @@ export default function TunnelPage() {
       <main className="flex-1 overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-8 py-5 border-b border-arteria-border">
           <div>
-            <h2 className="text-2xl font-bold text-white">Tunnel Mesh</h2>
-            <p className="text-xs text-arteria-muted mt-0.5">Encrypted tunnels to remote sites — no VPN required</p>
+            <h2 className="text-2xl font-bold text-white">Aorta Mesh</h2>
+            <p className="text-xs text-arteria-muted mt-0.5">Capillary agents connect remote sites via encrypted mTLS tunnels — no VPN required</p>
           </div>
           <button onClick={() => { setShowCreate(true); setEnrollInfo(null); }}
             className="px-4 py-2 bg-arteria-accent text-white text-sm rounded hover:bg-arteria-accent/80">
-            + New Tunnel Node
+            + New Capillary Node
           </button>
         </div>
 
         {/* Enrollment Info Banner */}
         {enrollInfo && (
           <div className="mx-8 mt-4 bg-arteria-surface border border-arteria-accent/50 rounded-lg p-4">
-            <p className="text-sm text-white font-medium mb-2">Node Created — Enrollment Instructions</p>
-            <p className="text-xs text-arteria-muted mb-3">Run the following command on the remote site to enroll the agent:</p>
+            <p className="text-sm text-white font-medium mb-2">Capillary Created — Enrollment Instructions</p>
+            <p className="text-xs text-arteria-muted mb-3">Run the following on the remote site to enroll the Capillary agent:</p>
             <div className="bg-arteria-bg rounded p-3 font-mono text-xs text-green-400 select-all">
-              arteria-agent enroll {enrollInfo.token} --broker &lt;broker-address&gt;:9443
+              capillary enroll {enrollInfo.token} --broker &lt;broker-address&gt;:9443
             </div>
             <button onClick={() => setEnrollInfo(null)} className="mt-2 text-xs text-arteria-muted hover:text-white">Dismiss</button>
           </div>
@@ -117,12 +117,12 @@ export default function TunnelPage() {
             {showCreate && (
               <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowCreate(false)}>
                 <div className="bg-arteria-surface border border-arteria-border rounded-lg w-[400px] p-6" onClick={e => e.stopPropagation()}>
-                  <h3 className="text-lg font-semibold text-white mb-4">Create Tunnel Node</h3>
+                  <h3 className="text-lg font-semibold text-white mb-4">Create Capillary Node</h3>
                   <div className="space-y-3">
                     <div>
                       <label className="text-xs text-arteria-muted">Node Name</label>
                       <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
-                        placeholder="e.g., Hospital A Agent"
+                        placeholder="e.g., Hospital A Capillary"
                         className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white" />
                     </div>
                     <div>
@@ -160,13 +160,13 @@ export default function TunnelPage() {
                   </div>
                   <div className="text-xs text-arteria-muted space-y-0.5">
                     <p>Site: {node.site_name}</p>
-                    {node.agent_version && <p>Agent: v{node.agent_version}</p>}
+                    {node.agent_version && <p>Capillary: v{node.agent_version}</p>}
                     {node.last_seen && <p>Last seen: {new Date(node.last_seen).toLocaleString()}</p>}
                   </div>
                 </div>
               ))}
               {nodes.length === 0 && (
-                <p className="text-center py-8 text-arteria-muted">No tunnel nodes. Create one to get started.</p>
+                <p className="text-center py-8 text-arteria-muted">No Capillary nodes. Create one to connect a remote site.</p>
               )}
             </div>
           </div>
@@ -178,7 +178,7 @@ export default function TunnelPage() {
                 <div className="px-5 py-4 border-b border-arteria-border flex items-center justify-between">
                   <div>
                     <h3 className="font-semibold text-white">{selectedNode.name} — Port Mappings</h3>
-                    <p className="text-xs text-arteria-muted">Configure which comm points are tunneled through this node</p>
+                    <p className="text-xs text-arteria-muted">Configure which comm points are routed through this Capillary</p>
                   </div>
                   <button onClick={() => setShowMapping(true)}
                     className="px-3 py-1.5 bg-arteria-accent text-white text-xs rounded">+ Add Mapping</button>
@@ -266,7 +266,7 @@ export default function TunnelPage() {
                       <p className="text-sm text-yellow-400 font-medium mb-2">Awaiting Enrollment</p>
                       <p className="text-xs text-arteria-muted mb-2">Run this command on the remote site:</p>
                       <code className="block bg-arteria-bg rounded p-2 text-xs text-green-400 font-mono select-all">
-                        arteria-agent enroll {selectedNode.enrollment_token}
+                        capillary enroll {selectedNode.enrollment_token}
                       </code>
                     </div>
                   )}
@@ -274,7 +274,7 @@ export default function TunnelPage() {
               </>
             ) : (
               <div className="flex-1 flex items-center justify-center text-arteria-muted text-sm">
-                Select a tunnel node to view its port mappings
+                Select a Capillary node to view its port mappings
               </div>
             )}
           </div>

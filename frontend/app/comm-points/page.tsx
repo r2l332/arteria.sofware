@@ -302,13 +302,13 @@ export default function CommPointsPage() {
                       <label className="flex items-center gap-2 text-sm text-gray-300 mb-2">
                         <input type="checkbox" checked={form.tunnel_enabled} onChange={(e) => setForm({ ...form, tunnel_enabled: e.target.checked })} className="rounded" />
                         <span className="flex items-center gap-1">
-                          <span className="text-cyan-400">⛓</span> Enable Encrypted Tunnel
+                          <span className="text-cyan-400">⛓</span> Route via Capillary (Encrypted Tunnel)
                         </span>
                       </label>
                       {form.tunnel_enabled && (
                         <div className="grid grid-cols-2 gap-3 pl-6">
                           <div>
-                            <label className="text-xs text-arteria-muted">Tunnel Node</label>
+                            <label className="text-xs text-arteria-muted">Capillary Node</label>
                             <select value={form.tunnel_node_id} onChange={(e) => setForm({ ...form, tunnel_node_id: e.target.value })}
                               className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white">
                               <option value="">— Select node —</option>
@@ -363,7 +363,18 @@ export default function CommPointsPage() {
                     <span className="font-mono">{cp.host}:{cp.port}</span>
                     <span>Retries: {cp.max_retries}</span>
                     {(cp as any).tunnel_enabled && (
-                      <span className="text-cyan-400 flex items-center gap-0.5">⛓ Tunnel</span>
+                      <span className={`flex items-center gap-1 ${
+                        (cp as any).capillary_status === 'connected' ? 'text-cyan-400' : 'text-yellow-400'
+                      }`}>
+                        ⛓ {(cp as any).capillary_name
+                          ? `${(cp as any).capillary_name} (${(cp as any).capillary_site || 'unknown site'})`
+                          : 'Capillary'}
+                        {(cp as any).capillary_status && (
+                          <span className={`ml-1 w-1.5 h-1.5 rounded-full inline-block ${
+                            (cp as any).capillary_status === 'connected' ? 'bg-green-400' : 'bg-yellow-400'
+                          }`} />
+                        )}
+                      </span>
                     )}
                   </div>
                 </div>

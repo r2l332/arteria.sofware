@@ -36,12 +36,12 @@ interface NavItem {
 const allNav: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, section: 'core' },
   { href: '/messages', label: 'Messages', icon: MessageSquare, section: 'core' },
-  { href: '/routes', label: 'Routes & Filters', icon: GitBranch, section: 'core' },
+  { href: '/routes', label: 'Routes & Filters', icon: GitBranch, module: 'routes-js', section: 'core' },
   { href: '/comm-points', label: 'Comm Points', icon: Radio, section: 'core' },
-  { href: '/tunnel', label: 'Tunnel Mesh', icon: Shield, module: 'tunnel', section: 'core' },
+  { href: '/tunnel', label: 'Aorta Mesh', icon: Shield, module: 'tunnel', section: 'core' },
   { href: '/fhir', label: 'FHIR Resources', icon: Heart, module: 'fhir', section: 'core' },
   { href: '/dicom', label: 'DICOM Nodes', icon: Scan, module: 'dicom', section: 'core' },
-  { href: '/playground', label: 'JS Playground', icon: Code2, section: 'tools' },
+  { href: '/playground', label: 'JS Playground', icon: Code2, module: 'routes-js', section: 'tools' },
   { href: '/errors', label: 'Errors / DLQ', icon: AlertTriangle, section: 'tools' },
   { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
@@ -50,7 +50,7 @@ const allNav: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { username, role, logout } = useAuth();
-  const [modules, setModules] = useState<Record<string, boolean>>({ hl7: true, tunnel: true });
+  const [modules, setModules] = useState<Record<string, boolean>>({ hl7: true, tunnel: true, 'routes-js': true });
 
   useEffect(() => {
     fetch(`${API_BASE}/config/modules`)

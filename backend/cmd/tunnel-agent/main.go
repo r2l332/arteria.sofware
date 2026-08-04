@@ -37,19 +37,19 @@ func main() {
 		}
 		if token == "" {
 			fmt.Println("Error: enrollment token required")
-			fmt.Println("  arteria-agent enroll <token>")
+			fmt.Println("  capillary enroll <token>")
 			fmt.Println("  or set ENROLL_TOKEN environment variable")
 			os.Exit(1)
 		}
 
-		fmt.Printf("Enrolling with broker at %s...\n", brokerAddr)
+		fmt.Printf("Enrolling with Aorta at %s...\n", brokerAddr)
 		if err := agent.Enroll(token); err != nil {
 			log.Fatalf("Enrollment failed: %v", err)
 		}
-		fmt.Println("Enrollment successful. Run 'arteria-agent connect' to start the tunnel.")
+		fmt.Println("Enrollment successful. Run 'capillary connect' to start the tunnel.")
 
 	case "connect":
-		fmt.Printf("Connecting to broker at %s...\n", brokerAddr)
+		fmt.Printf("Connecting to Aorta at %s...\n", brokerAddr)
 		go func() {
 			if err := agent.Connect(); err != nil {
 				log.Fatalf("Connection failed: %v", err)
@@ -87,17 +87,20 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("Arteria Tunnel Agent")
+	fmt.Println("Arteria Capillary — Remote Tunnel Agent")
 	fmt.Println()
-	fmt.Println("Usage: arteria-agent <command> [args]")
+	fmt.Println("Capillary connects remote sites to the Arteria Aorta hub")
+	fmt.Println("via an encrypted mTLS tunnel. No VPN required.")
+	fmt.Println()
+	fmt.Println("Usage: capillary <command> [args]")
 	fmt.Println()
 	fmt.Println("Commands:")
-	fmt.Println("  enroll <token>    Enroll this agent with the Arteria broker")
-	fmt.Println("  connect           Connect to the broker and start tunneling")
+	fmt.Println("  enroll <token>    Enroll this agent with the Aorta broker")
+	fmt.Println("  connect           Connect to Aorta and start tunneling")
 	fmt.Println("  status            Show agent enrollment status")
 	fmt.Println()
 	fmt.Println("Environment:")
-	fmt.Println("  BROKER_ADDR       Broker address (default: localhost:9443)")
+	fmt.Println("  BROKER_ADDR       Aorta broker address (default: localhost:9443)")
 	fmt.Println("  AGENT_CONFIG_DIR  Config/cert directory (default: /etc/arteria-agent)")
 	fmt.Println("  ENROLL_TOKEN      Enrollment token (alternative to CLI arg)")
 }

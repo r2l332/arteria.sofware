@@ -17,8 +17,9 @@ import (
 	"github.com/r2l332/arteria.app/backend/pkg/logging"
 	"github.com/r2l332/arteria.app/backend/pkg/metrics"
 	"github.com/r2l332/arteria.app/backend/pkg/natsutil"
+	"github.com/r2l332/arteria.app/backend/pkg/plugin"
+	"github.com/r2l332/arteria.app/backend/pkg/plugin/routesjs"
 	"github.com/r2l332/arteria.app/backend/pkg/scyllautil"
-	"github.com/r2l332/arteria.app/backend/pkg/v8pool"
 )
 
 const (
@@ -30,6 +31,7 @@ const (
 
 var log *logging.Logger
 var met *metrics.Counters
+var registry *plugin.Registry
 
 func main() {
 	var err error
@@ -41,12 +43,12 @@ func main() {
 
 	natsURL := envOrDefault("NATS_URL", nats.DefaultURL)
 	scyllaHost := envOrDefault("SCYLLA_HOST", "127.0.0.1")
-	v8PoolSize := 8
+	enabledPlugins := envOrDefault("ENABLE_PLUGINS", "routes-js") // comma-separated
 
 	log.Info("starting processing service", logging.Fields{
 		"nats_url":    natsURL,
 		"scylla_host": scyllaHost,
-		"v8_pool_size": v8PoolSize,
+		"plugins":     enabledPlugins,
 	})
 
 	// Connect to NATS
@@ -67,17 +69,6 @@ func main() {
 	}
 	defer session.Close()
 
-	// Initialize V8 pool
-	pool, err := v8pool.New(v8pool.Config{
-		PoolSize: v8PoolSize,
-		Timeout:  50 * time.Millisecond,
-	})
-	if err != nil {
-		log.Fatal("failed to create V8 pool", logging.Fields{"error": err.Error()})
-	}
-	defer pool.Close()
-	log.Info("V8 pool initialized", logging.Fields{"pool_size": v8PoolSize})
-
 	// Initialize metrics
 	met = metrics.New()
 
@@ -88,53 +79,34 @@ func main() {
 		msg.Respond(data)
 	})
 
-	// JS Playground — execute ad-hoc scripts via NATS request-reply
-	nc.Subscribe("arteria.playground.execute", func(msg *nats.Msg) {
-		var req struct {
-			Script     string `json:"script"`
-			FilterType string `json:"filter_type"`
-			Payload    string `json:"payload"`
-		}
-		if err := json.Unmarshal(msg.Data, &req); err != nil {
-			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": "invalid request"})
-			msg.Respond(resp)
-			return
-		}
+	// --- Plugin Registry ---
+	registry = plugin.NewRegistry()
+	pluginSet := parsePluginList(enabledPlugins)
 
-		ctx := context.Background()
-		result := pool.Execute(ctx, req.Script, req.Payload)
-
-		if result.Error != nil {
-			resp, _ := json.Marshal(map[string]interface{}{
-				"success": false,
-				"error":   result.Error.Error(),
-			})
-			msg.Respond(resp)
-			return
-		}
-
-		resp, _ := json.Marshal(map[string]interface{}{
-			"success": true,
-			"output":  result.Output,
-		})
-		msg.Respond(resp)
-	})
-
-	// Initialize processing engine
-	eng := engine.New(pool, session)
-	if err := eng.LoadConfig(); err != nil {
-		log.Fatal("failed to load engine config", logging.Fields{"error": err.Error()})
+	if pluginSet["routes-js"] {
+		registry.Register(routesjs.New())
+		log.Info("plugin registered", logging.Fields{"plugin": "routes-js"})
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Periodically reload routes/filters/lookups
-	eng.StartConfigReloader(ctx, 30*time.Second)
+	deps := &plugin.Dependencies{
+		Session: session,
+		NC:      nc,
+		JS:      js,
+	}
+	if err := registry.InitAll(ctx, deps); err != nil {
+		log.Fatal("plugin init failed", logging.Fields{"error": err.Error()})
+	}
+	defer registry.CloseAll()
+
+	// Register plugin NATS handlers
+	registry.RegisterAllNATSHandlers(nc)
 
 	// Subscribe to raw ingest
 	sub, err := js.QueueSubscribe(subjectRaw, consumerName, func(m *nats.Msg) {
-		handleMessage(ctx, m, js, session, eng)
+		handleMessage(ctx, m, js, session, registry)
 	}, nats.Durable(consumerName), nats.ManualAck(), nats.AckWait(30*time.Second))
 	if err != nil {
 		log.Fatal("failed to subscribe", logging.Fields{"error": err.Error()})
@@ -160,7 +132,7 @@ func toGocqlUUID(id uuid.UUID) gocql.UUID {
 	return gocql.UUID(id)
 }
 
-func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, session *gocql.Session, eng *engine.Engine) {
+func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, session *gocql.Session, reg *plugin.Registry) {
 	parsed := hl7.Parse(m.Data)
 
 	msgID, err := uuid.NewRandom()
@@ -184,8 +156,8 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	met.Received.Add(1)
 	met.BytesIn.Add(int64(len(m.Data)))
 
-	// Build the message envelope (Rhapsody-style message object)
-	envelope := &engine.MessageEnvelope{
+	// Build the message envelope
+	envelope := &plugin.MessageEnvelope{
 		MessageID:       msgID.String(),
 		MessageType:     parsed.MessageType,
 		TriggerEvent:    parsed.TriggerEvent,
@@ -196,37 +168,38 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	}
 
 	// Record message as RECEIVED
-	insertMessage(session, gocqlID, envelope, "", "RECEIVED", now)
+	engEnvelope := &engine.MessageEnvelope{
+		MessageID:       envelope.MessageID,
+		MessageType:     envelope.MessageType,
+		TriggerEvent:    envelope.TriggerEvent,
+		SendingFacility: envelope.SendingFacility,
+		PatientID:       envelope.PatientID,
+		RawPayload:      envelope.RawPayload,
+		Properties:      envelope.Properties,
+	}
+	insertMessage(session, gocqlID, engEnvelope, "", "RECEIVED", now)
 
-	// Run through the engine's filter chain
-	destTopic, transformedPayload, err := eng.ProcessMessage(ctx, envelope)
-	if err != nil {
-		log.Warn("filter chain rejected message", logging.Fields{
+	// Run through the plugin registry
+	result := reg.Process(ctx, envelope)
+	if result.Err != nil {
+		log.Warn("plugin chain rejected message", logging.Fields{
 			"message_id":   msgID.String(),
 			"message_type": parsed.MessageType + "^" + parsed.TriggerEvent,
-			"error":        err.Error(),
+			"error":        result.Err.Error(),
 		})
 
-		// Update status to ERROR
-		updateMessageStatus(session, gocqlID, "ERROR", err.Error(), now)
+		updateMessageStatus(session, gocqlID, "ERROR", result.Err.Error(), now)
 
-		// Send to Dead Letter Queue
 		dlqPayload, _ := json.Marshal(map[string]interface{}{
 			"message_id":  msgID.String(),
-			"error":       err.Error(),
+			"error":       result.Err.Error(),
 			"raw_payload": parsed.RawPayload,
 			"timestamp":   now,
 		})
 		js.Publish(subjectDLQ+"."+parsed.MessageType, dlqPayload)
 
-		// Record in error_messages table
 		session.Query(`INSERT INTO arteria.error_messages (message_id, error_type, error_details, raw_payload, retry_count, max_retries, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			gocqlID, "FILTER_ERROR", err.Error(), parsed.RawPayload, 0, 3, now).Exec()
-
-		log.Debug("message sent to DLQ", logging.Fields{
-			"message_id": msgID.String(),
-			"dlq_subject": subjectDLQ + "." + parsed.MessageType,
-		})
+			gocqlID, "FILTER_ERROR", result.Err.Error(), parsed.RawPayload, 0, 3, now).Exec()
 
 		met.Errors.Add(1)
 		met.Rejected.Add(1)
@@ -235,20 +208,19 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		return
 	}
 
-	// Update message with transformed payload and status
+	destTopic := result.DestinationTopic
+	transformedPayload := result.TransformedPayload
+
 	updateMessageTransformed(session, gocqlID, transformedPayload, "ROUTED", now)
 
-	// Insert into messages_by_patient
 	if parsed.PatientID != "" {
 		session.Query(`INSERT INTO arteria.messages_by_patient (patient_id, created_at, message_id) VALUES (?, ?, ?)`,
 			parsed.PatientID, now, gocqlID).Exec()
 	}
 
-	// Insert into messages_by_status
 	session.Query(`INSERT INTO arteria.messages_by_status (status, created_at, message_id, message_type, patient_id) VALUES (?, ?, ?, ?, ?)`,
 		"ROUTED", now, gocqlID, parsed.MessageType, parsed.PatientID).Exec()
 
-	// Publish to routing subject
 	routeSubject := subjectRoute + "." + destTopic
 	_, err = js.Publish(routeSubject, []byte(transformedPayload), nats.MsgId(msgID.String()))
 	if err != nil {
@@ -304,4 +276,15 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parsePluginList(s string) map[string]bool {
+	m := make(map[string]bool)
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			m[p] = true
+		}
+	}
+	return m
 }

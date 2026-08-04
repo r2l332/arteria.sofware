@@ -219,14 +219,23 @@ Shows all configured CPs as cards with:
 2. Fill in the form:
    - **Name** — descriptive name (e.g., "Lab MLLP Output")
    - **Direction** — INPUT (receives messages) or OUTPUT (sends messages)
-   - **Protocol** — MLLP, HTTP, TCP, or REST
+   - **Protocol** — MLLP, HTTP, TCP, REST, or cloud connectors (S3, Azure Blob, SQS, SNS, Event Hub, Service Bus, Webhook)
    - **Host** — hostname or IP (use `0.0.0.0` for INPUT to listen on all interfaces)
    - **Port** — TCP port number
    - **Max Retries** — how many times to retry on failure (OUTPUT only)
    - **Retry Delay (ms)** — wait between retries
    - **Timeout (ms)** — connection/send timeout
    - **Active** — enable/disable
+   - **Route via Capillary** — enable to route traffic through an encrypted Aorta tunnel
+     - Select the Capillary node (remote agent)
+     - Set the local port at the remote site
 3. Click **Create**
+
+### Capillary Connection Indicator
+
+Each CP card in the list shows which Capillary agent it is connected through:
+- **⛓ Node Name (Site Name)** — with a green dot when the Capillary is connected
+- **⛓ Node Name (Site Name)** — with a yellow dot when the Capillary is disconnected/enrolling
 
 ### Right Panel — Live CP Log Viewer
 

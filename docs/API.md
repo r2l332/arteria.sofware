@@ -25,7 +25,7 @@ Communication points represent inbound/outbound endpoints (equivalent to Rhapsod
 
 ### `GET /api/v1/comm-points`
 
-List all communication points.
+List all communication points. When a CP is connected via the Aorta mesh, the response includes Capillary node details.
 
 **Response:**
 ```json
@@ -41,7 +41,13 @@ List all communication points.
       "is_active": true,
       "max_retries": 0,
       "retry_delay_ms": 0,
-      "timeout_ms": 30000
+      "timeout_ms": 30000,
+      "tunnel_enabled": true,
+      "tunnel_node_id": "node-uuid",
+      "tunnel_local_port": 2575,
+      "capillary_name": "Hospital A Agent",
+      "capillary_site": "Hospital A",
+      "capillary_status": "connected"
     }
   ],
   "count": 1
