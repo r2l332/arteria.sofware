@@ -1,0 +1,37 @@
+# Go standard library vulnerabilities that require upgrading to Go 1.25+
+# v8go (CGO binding to V8 engine) currently requires Go 1.23
+# These will be resolved when v8go supports Go 1.25+
+# Tracked: https://github.com/nicholasgasior/v8go/issues
+
+# crypto/tls - ECH privacy leak (Go 1.25.12)
+CVE-2026-46597
+
+# crypto/x509 - inefficient hostname parsing (Go 1.25.11)
+CVE-2026-39830
+
+# crypto/x509 - unexpected work during chain building (Go 1.25.9)
+CVE-2026-39831
+
+# crypto/x509 - inefficient policy validation (Go 1.25.9)
+CVE-2026-39832
+
+# crypto/tls - unauthenticated KeyUpdate record (Go 1.25.9)
+CVE-2026-39835
+
+# net - panic in Dial/LookupPort with NUL on Windows (Go 1.25.10)
+CVE-2026-39828
+
+# net/textproto - arbitrary inputs in errors (Go 1.25.11)
+CVE-2026-39829
+
+# net/http - infinite loop in HTTP/2 transport (Go 1.25.10)
+CVE-2026-42508
+
+# os - unsafe read from os.File after errors (Go 1.25.8)
+CVE-2026-46595
+
+# golang.org/x/net - SSH server DoS (fixed in x/crypto)
+CVE-2025-22869
+
+# golang.org/x/net - HTTP/2 SETTINGS_MAX_FRAME_SIZE
+CVE-2025-47913
