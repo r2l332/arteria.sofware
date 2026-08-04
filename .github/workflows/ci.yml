@@ -192,21 +192,31 @@ jobs:
       - name: Build all images
         run: docker compose build --parallel
 
+      - name: Tag images for scanning
+        run: |
+          # Get the actual image names from compose (project name varies by directory)
+          API_IMAGE=$(docker compose images api --format '{{.Repository}}:{{.Tag}}' | head -1)
+          FRONTEND_IMAGE=$(docker compose images frontend --format '{{.Repository}}:{{.Tag}}' | head -1)
+          docker tag "$API_IMAGE" arteria-api:scan
+          docker tag "$FRONTEND_IMAGE" arteria-frontend:scan
+
       - name: Scan API image for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'arteriaapp-api'
+          image-ref: 'arteria-api:scan'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
+          trivyignores: '.trivyignore'
 
       - name: Scan Frontend image for vulnerabilities
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'arteriaapp-frontend'
+          image-ref: 'arteria-frontend:scan'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
+          trivyignores: '.trivyignore'
 
   capillary-binaries:
     name: Cross-compile Capillary
