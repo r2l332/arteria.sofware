@@ -47,7 +47,7 @@ jobs:
           npm audit --audit-level=high
 
       - name: Trivy filesystem scan (critical + high)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -70,7 +70,20 @@ jobs:
         working-directory: backend
         run: |
           go mod verify
-          go mod tidy -diff
+          echo "✓ All module checksums verified"
+
+      - name: Check go.mod is tidy
+        working-directory: backend
+        run: |
+          cp go.mod go.mod.bak
+          cp go.sum go.sum.bak
+          go mod tidy
+          if ! diff -q go.mod go.mod.bak > /dev/null 2>&1 || ! diff -q go.sum go.sum.bak > /dev/null 2>&1; then
+            echo "❌ go.mod/go.sum are not tidy. Run 'go mod tidy' and commit."
+            diff go.mod.bak go.mod || true
+            exit 1
+          fi
+          echo "✓ go.mod is tidy"
 
       - name: Check for replaced/retracted modules
         working-directory: backend
@@ -166,7 +179,7 @@ jobs:
         run: docker compose build --parallel
 
       - name: Scan API image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'arteriaapp-api'
           severity: 'CRITICAL,HIGH'
@@ -174,7 +187,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Scan Frontend image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'arteriaapp-frontend'
           severity: 'CRITICAL,HIGH'
