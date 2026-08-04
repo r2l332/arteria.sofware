@@ -1,32 +1,18 @@
-# Arteria TLS Reverse Proxy
-#
-# On first boot:
-#   - localhost: auto-generates a self-signed certificate
-#   - real domain: auto-provisions Let's Encrypt certificate
-#
-# Set DOMAIN=your.domain.com in .env for production.
-
 {$DOMAIN:localhost} {
-	# API routes
 	handle /api/* {
 		reverse_proxy api:8080
 	}
+
 	handle /health {
 		reverse_proxy api:8080
 	}
 
-	# Everything else goes to the frontend
 	handle {
 		reverse_proxy frontend:3000
 	}
 
-	# TLS: Caddy auto-generates certs
-	# - localhost → self-signed (trusted locally)
-	# - real domain → Let's Encrypt (if port 80/443 reachable)
-	# - set TLS_EMAIL for Let's Encrypt notifications
 	tls {$TLS_EMAIL:internal}
 
-	# Security headers
 	header {
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
