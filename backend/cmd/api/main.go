@@ -103,6 +103,9 @@ func main() {
 		return c.JSON(fiber.Map{"user_id": claims.UserID, "username": claims.Username, "role": claims.Role})
 	})
 	api.Post("/auth/change-password", changePasswordHandler(session, authCfg))
+	api.Get("/auth/password-policy", func(c *fiber.Ctx) error {
+		return c.JSON(auth.DefaultPasswordPolicy())
+	})
 
 	// --- Runtime Config ---
 	api.Get("/config/log-level", func(c *fiber.Ctx) error {
@@ -1191,8 +1194,10 @@ func changePasswordHandler(session *gocql.Session, cfg auth.Config) fiber.Handle
 			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 		}
 
-		if len(body.NewPassword) < 8 {
-			return c.Status(400).JSON(fiber.Map{"error": "password must be at least 8 characters"})
+		// Validate against password policy
+		policy := auth.DefaultPasswordPolicy()
+		if err := policy.Validate(body.NewPassword); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error(), "policy": policy})
 		}
 
 		// Verify current password
@@ -1460,8 +1465,9 @@ func createUser(session *gocql.Session) fiber.Handler {
 		if body.Username == "" || body.Password == "" || body.Role == "" {
 			return c.Status(400).JSON(fiber.Map{"error": "username, password, and role required"})
 		}
-		if len(body.Password) < 8 {
-			return c.Status(400).JSON(fiber.Map{"error": "password must be at least 8 characters"})
+		policy := auth.DefaultPasswordPolicy()
+		if err := policy.Validate(body.Password); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error(), "policy": policy})
 		}
 		if !auth.HasPermission(body.Role, auth.PermMetricsView) && body.Role != "security" {
 			// Validate role exists

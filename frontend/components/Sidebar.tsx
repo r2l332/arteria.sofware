@@ -17,6 +17,7 @@ import {
   LogOut,
   Users,
   Settings,
+  Key,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
@@ -166,6 +167,9 @@ export default function Sidebar() {
             <p className="text-2xs font-medium text-white truncate">{username}</p>
             <p className="text-2xs text-arteria-muted">{role}</p>
           </div>
+          <Link href="/account" className="p-1 text-arteria-muted hover:text-arteria-accent transition-colors" title="Change password">
+            <Key size={12} />
+          </Link>
           <button onClick={logout} className="p-1 text-arteria-muted hover:text-red-400 transition-colors" title="Sign out">
             <LogOut size={14} />
           </button>
