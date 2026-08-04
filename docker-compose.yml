@@ -129,6 +129,32 @@ services:
       - api
     restart: unless-stopped
 
+  # --- TLS Reverse Proxy (Caddy) ---
+  # Modes:
+  #   Auto Let's Encrypt:  Set DOMAIN=arteria.software TLS_EMAIL=admin@arteria.software
+  #   Custom certs:        Mount certs + use Caddyfile.custom-certs
+  #   Local dev:           Leave defaults (self-signed on localhost)
+  caddy:
+    image: caddy:2-alpine
+    container_name: arteria-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      TLS_EMAIL: ${TLS_EMAIL:-}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+      - ${TLS_CERT_DIR:-./infra/caddy}:/certs:ro
+    depends_on:
+      - api
+      - frontend
+    profiles:
+      - tls
+    restart: unless-stopped
+
   # --- Tunnel Broker ---
   tunnel-broker:
     build:
@@ -209,3 +235,5 @@ volumes:
   arteria_logs:
   arteria_backups:
   tunnel_ca:
+  caddy_data:
+  caddy_config:

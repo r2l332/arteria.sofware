@@ -1,0 +1,23 @@
+# Caddyfile for custom certificate mode
+# Use this when you have your own private/enterprise certs
+
+{$DOMAIN:arteria.software} {
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle /health {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
+
+	tls /certs/server.crt /certs/server.key
+
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		-Server
+	}
+}
