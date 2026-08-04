@@ -96,6 +96,8 @@ arteria.app/
 │   ├── scenarios/                   # Sample HL7 message files
 │   ├── scripts/run-tests.sh         # Test runner script
 │   └── Dockerfile                   # Deployable test service
+├── scripts/
+│   └── agent-ports.sh               # Agent port management helper
 ├── infra/
 │   ├── cql/                         # ScyllaDB schemas + seed data
 │   └── scripts/init-schema.sh       # Boot-time schema initializer
@@ -140,11 +142,90 @@ The tunnel mesh solves the industry-wide problem of encrypting HL7 TCP traffic w
 3. Enable **tunnel on a CP** in the dashboard — config auto-pushes to the agent
 4. Traffic flows: Hospital → Agent (plain TCP) → mTLS tunnel → Broker → Arteria
 
-```bash
-# At Hospital A:
-docker run -d arteria-agent enroll <token> --broker arteria.example.com:9443
-docker run -d arteria-agent connect --broker arteria.example.com:9443
+### Encryption Details
+
+| Layer | Implementation |
+|-------|---------------|
+| Transport | TLS 1.3 (minimum) |
+| Authentication | Mutual TLS — both agent and broker present certificates |
+| Certificate Authority | Auto-generated Arteria CA (ECDSA P-256) |
+| Enrollment | One-time token → agent generates keypair → broker signs certificate |
+| Multiplexing | yamux (HashiCorp) — multiple CPs over a single TLS connection |
+| Message routing | NATS JetStream — broker publishes to `arteria.ingest.raw` |
+| Key rotation | Certificates valid for 1 year, CA valid for 10 years |
+
+### Architecture
+
 ```
+Hospital Network                    Internet (TLS 1.3)              Cloud / Arteria
+┌──────────────┐  ┌──────────────┐  ══════════════════  ┌──────────────┐  ┌────────────┐
+│  HL7 System  │─▶│ Tunnel Agent │══════ mTLS ════════▶│ Tunnel Broker│─▶│ NATS       │
+│  (plain TCP) │  │  :2575-2578  │   yamux multiplex    │  :9443       │  │ JetStream  │
+└──────────────┘  └──────────────┘                      └──────────────┘  └─────┬──────┘
+                   Outbound only                        Deployable anywhere      │
+                   No firewall changes                  Only needs NATS access   ▼
+                                                                           ┌────────────┐
+                                                                           │ Processing │
+                                                                           │ V8 Filters │
+                                                                           └────────────┘
+```
+
+**Key properties:**
+- **Zero inbound firewall rules** at the hospital — agent connects outbound
+- **One tunnel, many CPs** — multiple communication points multiplexed over a single connection
+- **Config push** — enable tunnel on a CP in the dashboard, agent auto-configures
+- **Location-independent broker** — only needs NATS connectivity, deployable at any edge
+- **Auto-reconnect** — agent reconnects with exponential backoff if connection drops
+
+### Tested: Cross-Internet Mesh (Azure East US → Local)
+
+Verified with a tunnel agent deployed on an Azure VM (East US, `52.188.66.170`) connecting back to a local Arteria instance over the public internet:
+
+```
+Test Results:
+  Port 2575 → ADT^A01 (Admissions)  → mTLS → NATS → ROUTED ✓
+  Port 2576 → ORM^O01 (Lab Orders)  → mTLS → NATS → ROUTED ✓
+  Port 2577 → ORU^R01 (Results)     → mTLS → NATS → ROUTED ✓
+  Port 2578 → ADT^A08 (Updates)     → mTLS → NATS → ROUTED ✓
+
+  4/4 messages successfully tunneled across the internet
+  Single agent, single mTLS connection, 4 CPs multiplexed
+```
+
+### Agent Deployment
+
+```bash
+# 1. Create tunnel node in Arteria dashboard (or API)
+# 2. Deploy the agent Docker image at the remote site:
+
+docker run -d --name arteria-node \
+  --restart unless-stopped \
+  -v /opt/arteria-agent:/etc/arteria-agent \
+  -e BROKER_ADDR=arteria.example.com:9443 \
+  -p 2575:2575 \
+  arteria-agent enroll <token>
+
+docker run -d --name arteria-node \
+  --restart unless-stopped \
+  -v /opt/arteria-agent:/etc/arteria-agent \
+  -e BROKER_ADDR=arteria.example.com:9443 \
+  -p 2575:2575 -p 2576:2576 -p 2577:2577 \
+  arteria-agent connect
+```
+
+### Port Management
+
+For containerised deployments, use the port management helper:
+
+```bash
+# On the agent host:
+./agent-ports.sh list              # Show current ports
+./agent-ports.sh add 2579 2580     # Add new CP ports
+./agent-ports.sh remove 2576       # Remove a port
+./agent-ports.sh restart           # Recreate container with updated ports
+```
+
+Or configure in the Arteria dashboard: Comm Points → Edit CP → Enable Tunnel → set local port → config auto-pushes to agent.
 
 ## JS Filter Playground
 
