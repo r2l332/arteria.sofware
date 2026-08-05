@@ -78,7 +78,14 @@ export default function Sidebar() {
     return () => clearInterval(interval);
   }, []);
 
+  const isPlatformRole = role === 'super_admin' || role === 'devops';
+
   const visibleNav = allNav.filter(item => {
+    // Platform roles only see platform-relevant pages
+    if (isPlatformRole) {
+      const platformPages = ['/', '/organisations', '/users', '/settings', '/tunnel', '/messages-internal'];
+      return platformPages.includes(item.href);
+    }
     if (!item.module) return true;
     if (item.module === 'rbac') return role === 'admin' || role === 'security' || role === 'super_admin';
     if (item.module === 'platform') return role === 'super_admin' || role === 'admin';
@@ -107,7 +114,6 @@ export default function Sidebar() {
           <div>
             <h1 className="text-sm font-semibold text-white tracking-tight">{branding.app_name}</h1>
             <p className="text-2xs text-arteria-muted">{branding.subtitle}</p>
-            <p className="text-2xs text-arteria-muted">Integration Engine</p>
           </div>
         </div>
       </div>
