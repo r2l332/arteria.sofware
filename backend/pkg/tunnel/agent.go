@@ -16,33 +16,40 @@ import (
 
 // Agent connects outbound to the broker and manages local port listeners.
 type Agent struct {
-	brokerAddr string
-	nodeID     string
-	tlsCfg     *tls.Config
-	session    *yamux.Session
-	control    net.Conn
-	listeners  map[int]net.Listener
-	mu         sync.Mutex
-	quit       chan struct{}
-	configDir  string
-	ACKMode   bool // If true, send MLLP ACK to sender after forwarding
+	brokerAddr   string
+	nodeID       string
+	tlsCfg       *tls.Config
+	session      *yamux.Session
+	control      net.Conn
+	listeners    map[int]net.Listener
+	mu           sync.Mutex
+	quit         chan struct{}
+	configDir    string
+	ACKMode      bool   // If true, send MLLP ACK to sender after forwarding
+	ForwardHost  string // Host for outbound forwarding (default: 127.0.0.1, use host.docker.internal in Docker)
 }
 
 // AgentConfig holds agent configuration.
 type AgentConfig struct {
-	BrokerAddr string
-	ConfigDir  string // Directory to store certs and config
-	ACKMode   bool   // Send MLLP ACK after forwarding
+	BrokerAddr  string
+	ConfigDir   string // Directory to store certs and config
+	ACKMode     bool   // Send MLLP ACK after forwarding
+	ForwardHost string // Host for outbound forwarding (default: 127.0.0.1, use host.docker.internal in Docker)
 }
 
 // NewAgent creates and connects a tunnel agent.
 func NewAgent(cfg AgentConfig) *Agent {
+	fwdHost := cfg.ForwardHost
+	if fwdHost == "" {
+		fwdHost = "127.0.0.1"
+	}
 	return &Agent{
-		brokerAddr: cfg.BrokerAddr,
-		configDir:  cfg.ConfigDir,
-		listeners:  make(map[int]net.Listener),
-		quit:       make(chan struct{}),
-		ACKMode:   cfg.ACKMode,
+		brokerAddr:  cfg.BrokerAddr,
+		configDir:   cfg.ConfigDir,
+		listeners:   make(map[int]net.Listener),
+		quit:        make(chan struct{}),
+		ACKMode:     cfg.ACKMode,
+		ForwardHost: fwdHost,
 	}
 }
 
@@ -255,13 +262,15 @@ func (a *Agent) handleIncomingStreams() {
 func (a *Agent) forwardToLocal(stream net.Conn, targetPort int) {
 	defer stream.Close()
 
-	target, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", targetPort), 5*time.Second)
+	addr := fmt.Sprintf("%s:%d", a.ForwardHost, targetPort)
+	target, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	if err != nil {
-		log.Printf("[AGENT] forward to local :%d failed: %v", targetPort, err)
+		log.Printf("[AGENT] forward to %s failed: %v", addr, err)
 		return
 	}
 	defer target.Close()
 
+	log.Printf("[AGENT] forwarding outbound stream to %s", addr)
 	relay(stream, target)
 }
 
