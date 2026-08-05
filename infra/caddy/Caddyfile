@@ -8,8 +8,12 @@
 	}
 
 	handle {
-		reverse_proxy frontend:3000
+		reverse_proxy frontend:3000 {
+			header_down -Cache-Control
+			header_down -X-Nextjs-Cache
+		}
 		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
 	}
 
 	tls {$TLS_EMAIL:internal}
