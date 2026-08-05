@@ -271,3 +271,246 @@ ssh arteriaadmin@52.188.66.170
 DURATION=5m CONCURRENCY=40 TARGET_HOST=localhost PORTS=2575,2576,2577,2578 ./perftest
 ```
 Measures real cross-internet throughput through mTLS tunnel.
+
+---
+
+## Cloud-Native Architecture (Managed Services)
+
+Replace self-managed components with cloud-native equivalents for maximum performance
+with minimal operations overhead. Trade higher cost for zero-ops scaling.
+
+---
+
+### Azure Cloud-Native Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                              Azure Region (East US)                              │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  Azure Front Door (Global L7 LB + WAF + TLS)                             │  │
+│  │  - Auto TLS cert management                                               │  │
+│  │  - DDoS protection included                                               │  │
+│  │  - Geo-routing for multi-region                                            │  │
+│  └─────────────────────────────────┬─────────────────────────────────────────┘  │
+│                                    │                                             │
+│  ┌─────────────────────────────────▼─────────────────────────────────────────┐  │
+│  │  Azure Container Apps (Serverless Containers)                              │  │
+│  │                                                                            │  │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │  │
+│  │  │  Ingestion   │ │  Processing  │ │  API         │ │  Frontend (SSR)  │ │  │
+│  │  │  min:1 max:8 │ │  min:2 max:20│ │  min:1 max:4 │ │  min:1 max:2     │ │  │
+│  │  │  KEDA: TCP   │ │  KEDA: NATS  │ │  KEDA: HTTP  │ │  KEDA: HTTP      │ │  │
+│  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────────────┘ │  │
+│  │         │                 │                 │                               │  │
+│  └─────────┼─────────────────┼─────────────────┼───────────────────────────────┘  │
+│            │                 │                 │                                   │
+│  ┌─────────▼─────────────────▼─────────────────▼───────────────────────────────┐  │
+│  │  Azure Event Hubs (replaces NATS JetStream)                                 │  │
+│  │  - 1 TU = 1MB/s in, 2MB/s out = ~1200 msgs/sec                            │  │
+│  │  - Auto-inflate to 20 TU for burst                                          │  │
+│  │  - 7-day retention built-in                                                 │  │
+│  │  - Kafka protocol compatible                                                │  │
+│  └─────────────────────────────────┬───────────────────────────────────────────┘  │
+│                                    │                                              │
+│  ┌─────────────────────────────────▼───────────────────────────────────────────┐  │
+│  │  Azure Cosmos DB (Cassandra API) — replaces ScyllaDB                        │  │
+│  │  - Serverless mode: pay per RU (request unit)                               │  │
+│  │  - Auto-scale 0 → 4000 RU/s                                                │  │
+│  │  - Multi-region replication with single click                               │  │
+│  │  - TTL per-item (message retention built-in)                                │  │
+│  │  - 99.999% SLA with multi-region                                            │  │
+│  └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                   │
+│  ┌─────────────┐  ┌──────────────────┐  ┌──────────────────────────────────────┐ │
+│  │  Azure KV   │  │  Azure Monitor   │  │  Aorta Broker (Container App)       │ │
+│  │  Secrets    │  │  + App Insights  │  │  - Dedicated plan (always-on)       │ │
+│  │  JWT keys   │  │  Distributed     │  │  - TCP ingress on :9443             │ │
+│  │  TLS certs  │  │  tracing         │  │  - Connects to Event Hubs           │ │
+│  └─────────────┘  └──────────────────┘  └──────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Azure Service Mapping:**
+
+| Arteria Component | Azure Managed Service | Why |
+|---|---|---|
+| NATS JetStream | **Azure Event Hubs** | Infinite scale, no ops, Kafka compat, capture to Blob |
+| ScyllaDB | **Cosmos DB (Cassandra API)** | Same CQL queries work, serverless pricing, global replication |
+| Docker Compose | **Container Apps** | Serverless, KEDA auto-scale, pay-per-use, zero k8s management |
+| Caddy | **Azure Front Door** | Global CDN, WAF, DDoS, managed TLS, $0.01/10K requests |
+| Config backup | **Azure Blob Storage** | $0.02/GB/month, immutable backups, lifecycle policies |
+| Secrets | **Azure Key Vault** | HSM-backed, audit trail, managed rotation |
+| Monitoring | **Application Insights** | Distributed tracing, live metrics, smart alerts |
+| Log shipping | **Log Analytics** | KQL queries, 30-day free retention, dashboards |
+
+**Cost estimate (10M msgs/day):**
+- Container Apps: ~$80/month (consumption plan, auto-scale to zero overnight)
+- Event Hubs: ~$100/month (2 TU standard, auto-inflate)
+- Cosmos DB: ~$150/month (serverless, ~400 RU/s average)
+- Front Door: ~$40/month
+- Key Vault + Monitor: ~$30/month
+- **Total: ~$400/month** (fully managed, zero ops, auto-scaling)
+
+**Performance gains:**
+- Event Hubs: 1M msgs/sec throughput ceiling (vs self-managed NATS needing tuning)
+- Cosmos DB: <10ms P99 write latency globally (vs self-managed Scylla needing compaction tuning)
+- Container Apps: Scale to 20 replicas in seconds during burst (vs manual scaling)
+- Front Door: Edge caching for API reads, 200+ PoPs globally
+
+**Code changes required:**
+1. Replace `natsutil` with Event Hubs SDK (or use Kafka protocol — NATS client stays, add Kafka bridge)
+2. Replace `scyllautil` connection string (Cosmos Cassandra API is wire-compatible — just change endpoint)
+3. Add App Insights SDK for distributed tracing
+4. Container Apps YAML instead of docker-compose for deploy
+
+---
+
+### AWS Cloud-Native Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                              AWS Region (us-east-1)                              │
+│                                                                                  │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  CloudFront + ALB (TLS termination + WAF)                                 │  │
+│  └─────────────────────────────────┬─────────────────────────────────────────┘  │
+│                                    │                                             │
+│  ┌─────────────────────────────────▼─────────────────────────────────────────┐  │
+│  │  ECS Fargate (Serverless Containers)                                       │  │
+│  │                                                                            │  │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │  │
+│  │  │  Ingestion   │ │  Processing  │ │  API         │ │  Frontend        │ │  │
+│  │  │  Service     │ │  Service     │ │  Service     │ │  Service         │ │  │
+│  │  │  (auto-scale)│ │  (auto-scale)│ │  (auto-scale)│ │                  │ │  │
+│  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────────────────┘ │  │
+│  └─────────┼─────────────────┼─────────────────┼───────────────────────────────┘  │
+│            │                 │                 │                                   │
+│  ┌─────────▼─────────────────▼─────────────────▼───────────────────────────────┐  │
+│  │  Amazon MSK Serverless (Kafka — replaces NATS)                              │  │
+│  │  - Pay per data in/out                                                      │  │
+│  │  - Auto-scales partitions                                                   │  │
+│  │  - No cluster management                                                   │  │
+│  └─────────────────────────────────┬───────────────────────────────────────────┘  │
+│                                    │                                              │
+│  ┌─────────────────────────────────▼───────────────────────────────────────────┐  │
+│  │  Amazon Keyspaces (Cassandra-compatible — replaces ScyllaDB)                │  │
+│  │  - Serverless: pay per read/write                                           │  │
+│  │  - Same CQL, same schema, same queries                                     │  │
+│  │  - Auto-scales capacity                                                    │  │
+│  │  - TTL per-row                                                              │  │
+│  │  - Multi-region with global tables                                          │  │
+│  └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                   │
+│  ┌─────────────┐  ┌──────────────────┐  ┌──────────────────────────────────────┐ │
+│  │  Secrets    │  │  CloudWatch +    │  │  Aorta Broker (Fargate + NLB)       │ │
+│  │  Manager    │  │  X-Ray           │  │  - NLB for TCP :9443                │ │
+│  │             │  │  (tracing)       │  │  - Always-on task                   │ │
+│  └─────────────┘  └──────────────────┘  └──────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**AWS Service Mapping:**
+
+| Arteria Component | AWS Managed Service | Why |
+|---|---|---|
+| NATS JetStream | **MSK Serverless** | Zero ops Kafka, auto-scale, pay-per-GB |
+| ScyllaDB | **Amazon Keyspaces** | CQL-compatible, serverless, same schema works |
+| Docker Compose | **ECS Fargate** | Serverless containers, no EC2 management |
+| Caddy | **ALB + CloudFront** | Managed TLS, WAF, edge caching |
+| Config backup | **S3** | $0.023/GB, versioning, lifecycle rules |
+| Secrets | **Secrets Manager** | Auto-rotation, audit trail |
+| Monitoring | **CloudWatch + X-Ray** | Logs, metrics, distributed tracing |
+| Tunnel (Aorta) | **NLB + Fargate** | TCP passthrough, static IP for Capillaries |
+
+**Cost estimate (10M msgs/day):**
+- ECS Fargate: ~$100/month (0.25 vCPU tasks, scale based on traffic)
+- MSK Serverless: ~$80/month (data throughput charges)
+- Keyspaces: ~$120/month (on-demand, ~400 WCU avg)
+- ALB + CloudFront: ~$50/month
+- NLB (Aorta): ~$25/month
+- Secrets + CloudWatch: ~$25/month
+- **Total: ~$400/month** (fully managed, auto-scaling)
+
+---
+
+### Hybrid Architecture (Best of Both Worlds)
+
+Keep NATS + custom Go services (they're already fast), but offload stateful storage to managed services:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  AKS / EKS Cluster (3 nodes, spot instances for processing) │
+│                                                              │
+│  Self-managed (in containers):          Managed services:    │
+│  ┌────────────────────────┐   ┌────────────────────────────┐│
+│  │ NATS JetStream (3-node)│   │ Cosmos DB / Keyspaces      ││
+│  │ Ingestion              │   │ (serverless Cassandra)      ││
+│  │ Processing (V8)        │   │                             ││
+│  │ API                    │   │ Azure Blob / S3             ││
+│  │ Aorta broker           │   │ (backup + archive)          ││
+│  │ Frontend               │   │                             ││
+│  └────────────────────────┘   │ Key Vault / Secrets Mgr    ││
+│                                │ (JWT keys, TLS certs)       ││
+│                                │                             ││
+│                                │ Monitor / CloudWatch        ││
+│                                │ (observability)             ││
+│                                └────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why hybrid is the sweet spot:**
+- NATS is already incredibly fast (10M msgs/sec single node) — no point replacing with Event Hubs/MSK
+- V8 processing is CPU-bound — managed services can't help here
+- ScyllaDB → Cosmos/Keyspaces: **huge ops win** (no compaction tuning, no disk management, no node recovery)
+- Secrets → Key Vault: security compliance checkbox
+- Monitoring → managed: better dashboards, alerting, no Prometheus to maintain
+
+**Cost: ~$300-500/month** depending on traffic, with the operational simplicity of managed storage.
+
+---
+
+### Decision Matrix: When to Use What
+
+| Scenario | Recommended | Reason |
+|---|---|---|
+| PoC / Demo | Docker Compose on single VM | Cheapest, fastest to deploy |
+| Single hospital (< 5M/day) | Tier 1 VM | $150/month, simple, sufficient |
+| Multi-site health system | Hybrid (AKS + Cosmos) | Balance of cost, ops, resilience |
+| Enterprise with SLA | Full cloud-native (Azure/AWS) | Zero-ops, auto-scale, 99.99% SLA |
+| Cost-sensitive at scale | Self-managed on Hetzner/OVH | 5-10x cheaper than cloud, more ops |
+| Regulated (HIPAA/HITRUST) | Azure (Container Apps + Cosmos) | Compliance certifications inherited |
+
+---
+
+### Performance Comparison (10M msgs/day workload)
+
+| Metric | Self-Managed (VM) | Hybrid (AKS+Cosmos) | Full Cloud-Native |
+|---|---|---|---|
+| Throughput | 200 msgs/sec | 500 msgs/sec | 1000+ msgs/sec |
+| P99 Latency | 15ms | 10ms | 8ms |
+| Scale-up time | Manual (minutes) | 30 seconds (HPA) | 5 seconds (KEDA) |
+| Failover time | Manual / minutes | 30 seconds | Automatic / seconds |
+| Ops burden | High (you manage everything) | Medium (manage NATS + apps) | Low (manage code only) |
+| Monthly cost | $150-400 | $300-500 | $400-600 |
+| Compliance | Self-attested | Inherited (AKS) | Inherited (PaaS) |
+
+---
+
+### Quick Migration Path
+
+**Phase 1** (Current): Docker Compose on VM ✓
+**Phase 2** (Next): Move ScyllaDB → Cosmos DB (Cassandra API)
+- Change connection string in `scyllautil`
+- Same CQL schema works
+- Delete ScyllaDB container
+- Gain: auto-scaling, backup, multi-region, no disk management
+
+**Phase 3**: Move to Container Apps / Fargate
+- Convert docker-compose.yml to Container Apps YAML or ECS task definitions
+- Add KEDA scaling rules (scale processing on NATS queue depth)
+- Gain: auto-scale to zero overnight, burst handling, no VM patches
+
+**Phase 4** (Optional): Replace NATS with Event Hubs
+- Only if you need >10M msgs/sec or multi-region event streaming
+- NATS is already excellent — this is optional unless hitting limits
