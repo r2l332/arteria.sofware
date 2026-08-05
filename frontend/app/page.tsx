@@ -14,15 +14,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const load = async () => {
-      try {
-        const [s, m, e, met] = await Promise.all([getStats(), getMessages(10), getErrors(5), getMetrics()]);
-        setStats(s);
-        setRecentMessages(m.messages);
-        setRecentErrors(e.errors);
-        setMetrics(met);
-      } catch (err) {
-        console.error('Failed to load dashboard data:', err);
-      }
+      // Load each independently — some may 403 for restricted roles
+      getStats().then(setStats).catch(() => {});
+      getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
+      getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
+      getMetrics().then(setMetrics).catch(() => {});
     };
     load();
     const interval = setInterval(load, 3000);
