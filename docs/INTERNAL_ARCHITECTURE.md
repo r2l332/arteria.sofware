@@ -1,0 +1,273 @@
+# Arteria Production Architecture & Scaling Guide
+# INTERNAL — Lee Jelley only
+
+## Cost-Effective Production Architecture
+
+### Tier 1: Single-Node (Up to 5M msgs/day) — ~$150/month
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Single VM: Standard_D4ds_v5 (4 vCPU, 16GB RAM)    │
+│  Azure / AWS / Hetzner dedicated                     │
+│                                                      │
+│  ┌─────────┐ ┌────────────┐ ┌───────────────────┐  │
+│  │  NATS   │ │  ScyllaDB  │ │  Arteria Stack    │  │
+│  │  (RAM)  │ │  (1 node)  │ │  All services     │  │
+│  └─────────┘ └────────────┘ └───────────────────┘  │
+│                                                      │
+│  Storage: 100GB SSD (messages + audit logs)          │
+│  Network: 1Gbps                                      │
+└─────────────────────────────────────────────────────┘
+```
+
+**Cost breakdown:**
+- Azure Standard_D4ds_v5: ~$140/month (reserved 1yr)
+- Or Hetzner CPX41: ~$30/month (way cheaper, EU only)
+- Storage: Included in VM
+- Bandwidth: ~$5-10/month for tunnel traffic
+
+**Limits:**
+- ~60 msgs/sec sustained = 5M/day
+- 4 Capillary connections comfortably
+- 30-day message retention
+- Single point of failure (acceptable for small deployments)
+
+---
+
+### Tier 2: Resilient Pair (Up to 25M msgs/day) — ~$400/month
+
+```
+┌──────────────────────┐     ┌──────────────────────┐
+│  Node A (Primary)    │     │  Node B (Hot Standby) │
+│  D4ds_v5             │     │  D4ds_v5              │
+│                      │     │                       │
+│  NATS (cluster)  ◄───┼─────┼──► NATS (cluster)    │
+│  ScyllaDB (RF=2) ◄───┼─────┼──► ScyllaDB (RF=2)   │
+│  Arteria services    │     │  Arteria services     │
+│  Aorta broker        │     │  Aorta broker (stby)  │
+│  Caddy (active)      │     │  Caddy (passive)      │
+└──────────────────────┘     └──────────────────────┘
+         │                              │
+         └──────── Azure LB ───────────┘
+                      │
+              DNS: arteria.software
+```
+
+**How it works:**
+- NATS cluster (2-node, JetStream with R=2)
+- ScyllaDB with RF=2 (each node has a full copy)
+- Azure Load Balancer or Keepalived for failover
+- Both nodes run all services; LB routes to healthy one
+- If Node A dies, Node B serves within seconds (NATS re-elects leader)
+- Capillary agents reconnect automatically (built-in retry)
+
+**Cost:**
+- 2x D4ds_v5: ~$280/month (reserved)
+- Azure LB: ~$20/month
+- Storage: 200GB each = ~$40/month
+- Bandwidth: ~$20/month
+- **Total: ~$360-400/month**
+
+---
+
+### Tier 3: Full HA (25M+ msgs/day, zero downtime) — ~$800-1200/month
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                        Azure / AWS Region                           │
+│                                                                     │
+│  ┌─── Availability Zone 1 ───┐   ┌─── Availability Zone 2 ───┐   │
+│  │  NATS node 1              │   │  NATS node 2              │   │
+│  │  ScyllaDB node 1          │   │  ScyllaDB node 2          │   │
+│  │  Processing (x2 replicas) │   │  Processing (x2 replicas) │   │
+│  │  Ingestion (x2 replicas)  │   │  Ingestion (x2 replicas)  │   │
+│  │  API (x1)                 │   │  API (x1)                 │   │
+│  │  Aorta broker (x1)        │   │  Aorta broker (x1)        │   │
+│  └────────────────────────────┘   └────────────────────────────┘   │
+│                                                                     │
+│  ┌─── Availability Zone 3 ───┐                                     │
+│  │  NATS node 3 (quorum)     │   ┌─────────────────────────────┐  │
+│  │  ScyllaDB node 3          │   │  Azure Front Door / ALB     │  │
+│  └────────────────────────────┘   │  TLS termination           │  │
+│                                    │  Geo-routing               │  │
+│                                    └─────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**Key decisions:**
+- NATS: 3-node cluster (Raft consensus, tolerates 1 failure)
+- ScyllaDB: 3-node with RF=3 (tolerates 1 failure, CL=QUORUM)
+- Processing: Horizontally scaled (NATS consumer groups handle this automatically)
+- Ingestion: Horizontally scaled (each listens on same port via LB)
+- API: 2 replicas behind LB
+- Aorta: Active/passive (Capillaries reconnect on failover)
+
+**Cost (Azure):**
+- 3x D4ds_v5 (NATS+Scylla): ~$420/month
+- 4x D2ds_v5 (Processing): ~$240/month  
+- 2x B2ms (API+Ingestion): ~$60/month
+- Azure Front Door: ~$35/month
+- Managed disks: ~$100/month
+- **Total: ~$850-1000/month**
+
+**Or with Kubernetes (AKS):**
+- 3-node AKS cluster (D4ds_v5): ~$420/month
+- ScyllaDB Operator manages storage
+- HPA auto-scales processing pods
+- Same resilience, easier operations
+- **Total: ~$600-800/month** (AKS is free, pay for nodes only)
+
+---
+
+## Scaling Levers
+
+### What scales horizontally (cheap to add):
+| Component | How | Cost per unit |
+|-----------|-----|---------------|
+| Processing | Add replicas, NATS consumer groups auto-balance | ~$60/month per D2 |
+| Ingestion | Add replicas behind LB, same MLLP port | ~$60/month per D2 |
+| Capillary agents | Unlimited, each connects to Aorta independently | $0 (runs at customer site) |
+| API | Add replicas behind LB | ~$30/month per B2 |
+
+### What scales vertically (scale up the box):
+| Component | Limit | When to scale |
+|-----------|-------|---------------|
+| NATS | Memory (message buffer) | >10K msgs/sec sustained |
+| ScyllaDB | Disk IOPS + Memory | >50K writes/sec |
+| V8 Pool | CPU cores (1 isolate per core) | Filter execution > 10ms avg |
+| Aorta broker | Memory (yamux sessions) | >100 Capillary connections |
+
+### Key bottleneck points:
+1. **ScyllaDB writes** — First bottleneck at high volume. Fix: add nodes, increase RF
+2. **V8 filter execution** — CPU-bound. Fix: increase pool size, add processing replicas
+3. **NATS JetStream** — Memory pressure at sustained high throughput. Fix: file storage, add nodes
+4. **Network I/O** — Tunnel bandwidth. Fix: co-locate Aorta near Capillaries
+
+---
+
+## Cost Optimization Strategies
+
+### 1. Use reserved instances (save 40-60%)
+- 1-year reserved: ~40% savings
+- 3-year reserved: ~60% savings
+- Always reserve NATS+ScyllaDB nodes (they run 24/7)
+
+### 2. Use spot instances for processing
+- Processing is stateless and restartable
+- Azure Spot VMs: 60-90% discount
+- If evicted, NATS re-delivers unacked messages automatically
+- Configure: `nats.AckWait(60*time.Second)` for spot tolerance
+
+### 3. Tiered storage for ScyllaDB
+- Hot (SSD): Last 7 days of messages
+- Warm (HDD): 7-30 days
+- Cold (Blob): 30+ days (archive via cloud connector)
+- TTL handles auto-expiry: no manual cleanup needed
+
+### 4. Right-size for actual load
+- Most hospitals: 1-5M msgs/day → Tier 1 is sufficient
+- Large health systems: 5-25M → Tier 2
+- HIE / National systems: 25M+ → Tier 3
+
+### 5. Hetzner for non-regulated workloads
+- 4x cheaper than Azure for equivalent specs
+- Great for dev/staging/demo environments
+- Dedicated servers: $50-100/month for 8 core, 32GB, NVMe
+
+---
+
+## Operational Playbook
+
+### Monitoring checklist:
+- NATS: stream lag (msgs pending > 1000 = falling behind)
+- ScyllaDB: write latency P99 (> 10ms = needs attention)
+- Processing: msgs/min rate vs ingestion rate (gap = backpressure)
+- V8: timeout count (> 0.1% = scripts too complex)
+- Aorta: active tunnel count, reconnection events
+- Disk: ScyllaDB data size (plan for growth)
+
+### Capacity planning formula:
+```
+Required processing power = (msgs/sec) × (avg filter time) × (safety factor 2x)
+Required NATS memory = (msgs/sec) × (avg msg size) × (buffer seconds) × (RF)
+Required ScyllaDB IOPS = (msgs/sec) × 3 (insert + 2 index updates)
+Required disk = (msgs/day) × (avg msg size) × (retention days) × 1.3 (compaction overhead)
+```
+
+### Example: 10M msgs/day hospital system
+```
+msgs/sec = 10M / 86400 = ~116 msgs/sec
+Avg msg size = 800 bytes (weighted by message mix)
+Filter time = 5ms avg
+
+Processing: 116 × 0.005 × 2 = 1.16 cores → 2 cores sufficient
+NATS memory: 116 × 800 × 60 × 2 = 11MB buffer (trivial)
+ScyllaDB IOPS: 116 × 3 = 348 IOPS (any SSD handles this)
+Disk/month: 10M × 800 × 30 = 240GB (30-day retention)
+```
+
+**Conclusion: A single D4 VM handles 10M msgs/day comfortably.**
+
+---
+
+## Deployment Recommendations
+
+### For selling to customers:
+1. **Start with Tier 1** — Prove value on a single VM ($150/month)
+2. **Upsell to Tier 2** when they need HA — "resilient pair" ($400/month)
+3. **Tier 3 only for enterprise** with SLA requirements (>$800/month)
+4. **Capillary is free** — runs at their site, no infrastructure cost to you
+5. **Per-message pricing** doesn't make sense; use monthly subscription
+
+### Pricing model suggestion:
+| Tier | Price | Includes |
+|------|-------|----------|
+| Starter | $500/month | 5M msgs/day, 2 Capillaries, 30-day retention |
+| Professional | $1500/month | 25M msgs/day, 10 Capillaries, 90-day retention, HA |
+| Enterprise | $5000/month | Unlimited, dedicated, custom retention, SLA |
+
+Your infrastructure cost is 10-30% of the price → healthy margin.
+
+---
+
+## Performance Test Scenarios
+
+### Scenario 1: Steady State (normal day)
+```bash
+DURATION=30m CONCURRENCY=10 ./scripts/run-perftest.sh
+```
+Simulates typical hospital traffic: ~40 msgs/sec across 4 CPs.
+
+### Scenario 2: Peak Load (morning shift change)
+```bash
+DURATION=10m CONCURRENCY=50 ./scripts/run-perftest.sh
+```
+Simulates 200+ msgs/sec burst when all departments start simultaneously.
+
+### Scenario 3: Soak Test (24h endurance)
+```bash
+DURATION=24h CONCURRENCY=15 ./scripts/run-perftest.sh
+```
+Validates memory leaks, disk growth, GC pressure over extended period.
+
+### Scenario 4: Chaos (network issues)
+Run perftest while randomly killing/restarting containers:
+```bash
+# In one terminal:
+DURATION=10m CONCURRENCY=30 ./scripts/run-perftest.sh
+
+# In another:
+while true; do
+  sleep $((RANDOM % 30 + 10))
+  docker restart arteria-processing
+done
+```
+Validates zero message loss under failure conditions.
+
+### Scenario 5: Tunnel Stress (Capillary throughput)
+Run from the Azure VM through the tunnel:
+```bash
+ssh arteriaadmin@52.188.66.170
+DURATION=5m CONCURRENCY=40 TARGET_HOST=localhost PORTS=2575,2576,2577,2578 ./perftest
+```
+Measures real cross-internet throughput through mTLS tunnel.
