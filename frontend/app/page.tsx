@@ -157,8 +157,37 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Live Throughput */}
-          {metrics && (
+          {/* System Resources (platform only) */}
+          {isPlatform && health && (
+            <div className="card">
+              <div className="card-header flex items-center gap-2">
+                <Server size={16} className="text-arteria-muted" />
+                <span className="text-sm font-medium text-white">System Resources</span>
+              </div>
+              <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {(health as any).resources && Object.entries((health as any).resources as Record<string, { used: number; total: number; unit: string; percent: number }>).map(([name, res]) => (
+                  <div key={name} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-white capitalize">{name}</span>
+                      <span className="text-2xs text-arteria-muted">{res.used}{res.unit} / {res.total}{res.unit}</span>
+                    </div>
+                    <div className="w-full bg-arteria-bg rounded-full h-2">
+                      <div className={`h-2 rounded-full transition-all ${
+                        res.percent > 90 ? 'bg-red-500' : res.percent > 70 ? 'bg-yellow-500' : 'bg-green-500'
+                      }`} style={{ width: `${Math.min(res.percent, 100)}%` }} />
+                    </div>
+                    <p className="text-2xs text-arteria-muted text-right">{res.percent.toFixed(1)}%</p>
+                  </div>
+                ))}
+                {!(health as any).resources && (
+                  <p className="text-xs text-arteria-muted col-span-4">Resource metrics loading...</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Live Throughput (org users only) */}
+          {!isPlatform && metrics && (
             <div className="grid grid-cols-2 gap-4">
               {metrics.ingestion && (
                 <div className="card">

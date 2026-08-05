@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -2063,9 +2064,41 @@ func platformHealthCheck(dbSession *gocql.Session, nc *nats.Conn) fiber.Handler 
 			}
 		}
 
+		// System resources
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+
+		resources := fiber.Map{
+			"memory": fiber.Map{
+				"used":    memStats.Alloc / (1024 * 1024),
+				"total":   memStats.Sys / (1024 * 1024),
+				"unit":    "MB",
+				"percent": float64(memStats.Alloc) / float64(memStats.Sys) * 100,
+			},
+			"goroutines": fiber.Map{
+				"used":    runtime.NumGoroutine(),
+				"total":   1000,
+				"unit":    "",
+				"percent": float64(runtime.NumGoroutine()) / 10, // % of 1000 max
+			},
+			"gc_cycles": fiber.Map{
+				"used":    memStats.NumGC,
+				"total":   memStats.NumGC,
+				"unit":    "",
+				"percent": 0.0,
+			},
+			"heap": fiber.Map{
+				"used":    memStats.HeapInuse / (1024 * 1024),
+				"total":   memStats.HeapSys / (1024 * 1024),
+				"unit":    "MB",
+				"percent": float64(memStats.HeapInuse) / float64(memStats.HeapSys) * 100,
+			},
+		}
+
 		return c.JSON(fiber.Map{
 			"status":       overallStatus,
 			"components":   components,
+			"resources":    resources,
 			"tunnel_nodes": fiber.Map{"total": totalNodes, "connected": connectedNodes},
 			"orgs":         fiber.Map{"total": orgCount},
 			"users":        fiber.Map{"total": userCount, "online": sessionTracker.Count()},
