@@ -434,39 +434,254 @@ with minimal operations overhead. Trade higher cost for zero-ops scaling.
 
 ---
 
-### Hybrid Architecture (Best of Both Worlds)
+### Deep Dive: Cosmos DB Throughput — Is It Enough?
 
-Keep NATS + custom Go services (they're already fast), but offload stateful storage to managed services:
+**Short answer: Yes, with caveats.**
+
+#### Cosmos DB Cassandra API — Throughput Reality
+
+| Mode | Max Throughput | Cost | Best For |
+|---|---|---|---|
+| Serverless | 5,000 RU/s burst | Pay per request | Dev, < 1M msgs/day |
+| Autoscale Provisioned | 1,000 → 100,000 RU/s | 1.5x provisioned cost | Production, variable load |
+| Manual Provisioned | Up to 1,000,000 RU/s | Cheapest per RU at scale | High steady-state |
+
+**RU cost per Arteria operation:**
+- Insert message (1KB avg): ~10 RU
+- Insert message_by_patient index: ~5 RU
+- Insert message_by_status index: ~5 RU
+- Read single message: ~5 RU
+- List last 100 messages: ~50 RU
+
+**So per message processed: ~20 RU (write) + occasional reads**
+
+**Throughput math:**
+| Messages/day | msgs/sec | RU/s needed | Cosmos Mode | Monthly Cost |
+|---|---|---|---|---|
+| 1M | 12 | 240 RU/s | Serverless | ~$50 |
+| 5M | 58 | 1,160 RU/s | Autoscale (max 2K) | ~$120 |
+| 10M | 116 | 2,320 RU/s | Autoscale (max 4K) | ~$200 |
+| 25M | 290 | 5,800 RU/s | Autoscale (max 10K) | ~$450 |
+| 50M | 580 | 11,600 RU/s | Provisioned 15K | ~$600 |
+| 100M | 1,157 | 23,000 RU/s | Provisioned 30K | ~$1,100 |
+
+**Cosmos DB limits that could bite you:**
+1. **Single partition limit: 10,000 RU/s** — Arteria uses `message_id` as PK (UUID = perfect distribution). No hotspot risk.
+2. **Item size limit: 2MB** — HL7 messages are typically 0.5-10KB. No issue.
+3. **Cassandra API limitations**: No `ALLOW FILTERING` (need proper indexes), no lightweight transactions on non-PK columns.
+4. **Latency**: P50 = 5ms, P99 = 15ms for writes. Slightly slower than local ScyllaDB (P50 = 1ms) but still well within requirements.
+5. **TTL**: Native per-item TTL works identically to ScyllaDB. Message retention is handled automatically.
+
+**Verdict: Cosmos DB handles up to 100M msgs/day without breaking a sweat.**
+Above that, you'd use dedicated Cosmos capacity (unlimited) or stick with self-managed ScyllaDB cluster.
+
+**The real question: Do you even need 100M msgs/day?**
+- Largest health system in Australia: ~10M HL7 msgs/day
+- NHS England (all trusts combined): ~50M msgs/day
+- Average mid-size hospital: 500K-2M msgs/day
+
+**Cosmos DB is overkill for almost every customer. That's the point — it never becomes a bottleneck.**
+
+#### Schema changes needed for Cosmos Cassandra API:
+
+```cql
+-- The only change: use RU-based throughput instead of tablets
+CREATE KEYSPACE arteria WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+-- All existing CREATE TABLE statements work unchanged
+-- Cosmos auto-creates secondary indexes
+-- TTL works via DEFAULT_TIME_TO_LIVE or per-row TTL
+```
+
+Code change in `scyllautil/scylla.go`:
+```go
+// Just change the connection config:
+cfg := gocql.NewCluster("arteria-cosmos.cassandra.cosmos.azure.com")
+cfg.Port = 10350
+cfg.Authenticator = gocql.PasswordAuthenticator{
+    Username: cosmosAccountName,
+    Password: cosmosKey,
+}
+cfg.SslOpts = &gocql.SslOptions{EnableHostVerification: false}
+cfg.ConnectTimeout = 10 * time.Second
+// Everything else stays the same — same queries, same schema
+```
+
+---
+
+### Deep Dive: NATS Deployment Options
+
+NATS is Arteria's backbone — it handles all inter-service messaging, JetStream persistence, and tunnel routing. Here's how to deploy it properly in each environment:
+
+#### Option 1: NATS in Container Apps / Fargate (Simplest)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  AKS / EKS Cluster (3 nodes, spot instances for processing) │
-│                                                              │
-│  Self-managed (in containers):          Managed services:    │
-│  ┌────────────────────────┐   ┌────────────────────────────┐│
-│  │ NATS JetStream (3-node)│   │ Cosmos DB / Keyspaces      ││
-│  │ Ingestion              │   │ (serverless Cassandra)      ││
-│  │ Processing (V8)        │   │                             ││
-│  │ API                    │   │ Azure Blob / S3             ││
-│  │ Aorta broker           │   │ (backup + archive)          ││
-│  │ Frontend               │   │                             ││
-│  └────────────────────────┘   │ Key Vault / Secrets Mgr    ││
-│                                │ (JWT keys, TLS certs)       ││
-│                                │                             ││
-│                                │ Monitor / CloudWatch        ││
-│                                │ (observability)             ││
-│                                └────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  Container Apps Environment (dedicated plan)             │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  NATS Container (always-on, dedicated plan)       │   │
+│  │  - 2 vCPU, 4GB RAM                               │   │
+│  │  - Azure Files volume for JetStream persistence   │   │
+│  │  - Internal-only TCP ingress (:4222)              │   │
+│  │  - No scale-to-zero (must be always running)      │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Why hybrid is the sweet spot:**
-- NATS is already incredibly fast (10M msgs/sec single node) — no point replacing with Event Hubs/MSK
-- V8 processing is CPU-bound — managed services can't help here
-- ScyllaDB → Cosmos/Keyspaces: **huge ops win** (no compaction tuning, no disk management, no node recovery)
-- Secrets → Key Vault: security compliance checkbox
-- Monitoring → managed: better dashboards, alerting, no Prometheus to maintain
+**Pros:** Simple, single container, works today
+**Cons:** Single point of failure, max 4GB memory, no clustering
+**Cost:** ~$60/month (dedicated plan, 2 vCPU always-on)
+**Capacity:** ~5M msgs/day (limited by memory for JetStream)
+**Best for:** Tier 1 (single customer, non-critical)
 
-**Cost: ~$300-500/month** depending on traffic, with the operational simplicity of managed storage.
+#### Option 2: NATS on AKS/EKS (Production — Recommended)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  AKS Cluster (3 nodes: Standard_D2ds_v5)                         │
+│                                                                   │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐     │
+│  │  NATS Pod 1    │  │  NATS Pod 2    │  │  NATS Pod 3    │     │
+│  │  (JetStream)   │  │  (JetStream)   │  │  (JetStream)   │     │
+│  │  R=3 streams   │  │  R=3 streams   │  │  R=3 streams   │     │
+│  │  PVC: 50GB SSD │  │  PVC: 50GB SSD │  │  PVC: 50GB SSD │     │
+│  └────────┬───────┘  └────────┬───────┘  └────────┬───────┘     │
+│           │                    │                    │              │
+│           └────── NATS Cluster (Raft) ─────────────┘              │
+│                          │                                        │
+│  ┌───────────────────────▼───────────────────────────────────┐   │
+│  │  Other Arteria pods (processing, ingestion, api, aorta)   │   │
+│  │  Connect to nats://nats:4222 (cluster-internal)           │   │
+│  └───────────────────────────────────────────────────────────┘   │
+│                                                                   │
+│  Deployed via: Helm chart (nats/nats) or NATS Operator           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Deploy with Helm:**
+```bash
+helm repo add nats https://nats-io.github.io/k8s/helm/charts/
+helm install nats nats/nats \
+  --set nats.jetstream.enabled=true \
+  --set nats.jetstream.memStorage.size=2Gi \
+  --set nats.jetstream.fileStorage.size=50Gi \
+  --set nats.jetstream.fileStorage.storageClassName=managed-premium \
+  --set cluster.enabled=true \
+  --set cluster.replicas=3 \
+  --set nats.resources.requests.cpu=500m \
+  --set nats.resources.requests.memory=1Gi \
+  --set nats.resources.limits.cpu=2000m \
+  --set nats.resources.limits.memory=4Gi
+```
+
+**Pros:** HA (tolerates 1 node failure), auto-recovery, proven at scale
+**Cons:** Needs AKS cluster ($200+ for 3 nodes), operational knowledge
+**Cost:** ~$200/month (AKS nodes) + ~$30/month (PVC storage)
+**Capacity:** 25M+ msgs/day per cluster, horizontal scaling via super-clusters
+**Best for:** Tier 2/3 production deployments
+
+#### Option 3: NATS on Dedicated VMs (Maximum Performance)
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│  3x Standard_E4ds_v5 (4 vCPU, 32GB RAM, NVMe temp disk)      │
+│                                                                │
+│  VM 1: NATS node 1     VM 2: NATS node 2     VM 3: NATS 3    │
+│  JetStream: 16GB RAM   JetStream: 16GB RAM    JetStream: 16GB │
+│  File store: NVMe      File store: NVMe        File store: NVMe│
+│  Raft leader/follower  Raft leader/follower   Raft leader/fol │
+│                                                                │
+│  Connected via: Azure VNet peering (10Gbps between VMs)        │
+│  No load balancer needed — clients discover via DNS/seed list  │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Pros:** Maximum throughput (10M+ msgs/sec), full control, predictable latency
+**Cons:** Most operational overhead, manual failover recovery
+**Cost:** ~$300/month (3x E4ds reserved) + storage
+**Capacity:** 100M+ msgs/day, limited only by disk I/O
+**Best for:** Extreme throughput requirements, multi-tenant platform
+
+#### NATS Performance Benchmarks (real-world):
+
+| Config | Msgs/sec (publish) | Msgs/sec (consume) | Latency P99 |
+|---|---|---|---|
+| 1 node, memory storage | 1,200,000 | 2,000,000 | 0.3ms |
+| 1 node, file storage | 400,000 | 1,500,000 | 1.2ms |
+| 3 node cluster, R=3 | 200,000 | 1,000,000 | 2.5ms |
+| 3 node cluster, R=1 | 800,000 | 1,500,000 | 0.8ms |
+
+**Arteria's usage pattern:**
+- Publish: ~200 msgs/sec (ingestion → stream)
+- Consumer: ~200 msgs/sec (processing pulls from stream)
+- NATS request/reply: ~50 req/sec (metrics, playground, tunnel routing)
+
+**Even a single NATS node in memory mode handles 6000x our requirement.**
+Clustering is for resilience, not throughput.
+
+#### Recommended NATS Configuration for Each Tier:
+
+| Tier | NATS Deploy | Storage | Replicas | Capacity |
+|---|---|---|---|---|
+| Single node | Container (Docker/CA) | Memory (RAM) | 1 | 5M msgs/day |
+| Resilient pair | 2 containers (Container Apps) | Azure Files | R=2 | 15M msgs/day |
+| AKS cluster | Helm chart, 3 pods | Premium SSD PVC | R=3 | 50M+ msgs/day |
+| Dedicated VMs | Bare metal NATS | Local NVMe | R=3 | 100M+ msgs/day |
+
+---
+
+### Hybrid Architecture (Recommended Production)
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│  AKS Cluster (3 nodes: Standard_D4ds_v5, 1 spot node pool for processing) │
+│                                                                             │
+│  System Node Pool (always-on, 2 nodes):                                     │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  NATS (3 replicas, Helm chart, JetStream R=3, Premium SSD PVCs)     │  │
+│  │  Ingestion (2 replicas, host-port :2575)                            │  │
+│  │  API (2 replicas, behind Internal LB)                               │  │
+│  │  Aorta broker (1 replica, host-port :9443)                          │  │
+│  │  Frontend (1 replica)                                                │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  Spot Node Pool (scale 0-10, evictable):                                    │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Processing (2-20 replicas, HPA on NATS stream pending msgs)        │  │
+│  │  Tolerations: azure.com/spot=true                                   │  │
+│  │  If evicted: NATS re-delivers unacked messages, new pod picks up    │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  External (Managed Services):                                               │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │  Cosmos DB (Cassandra API, Autoscale 1K-10K RU/s)                   │  │
+│  │  Azure Front Door (TLS + WAF + CDN)                                 │  │
+│  │  Azure Key Vault (secrets)                                          │  │
+│  │  Azure Monitor + App Insights (observability)                       │  │
+│  │  Azure Blob (config backups, message archive)                       │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why this is the best architecture:**
+
+1. **NATS stays in-cluster** — It's already 6000x faster than needed. Running it in AKS with PVCs gives HA + persistence with zero external dependency. No network hop to a managed service.
+
+2. **Cosmos DB for storage** — Eliminates ScyllaDB ops entirely. Auto-scales, auto-backups, TTL works, same CQL. The 15ms P99 latency is invisible in an async pipeline (messages flow through NATS, not Cosmos).
+
+3. **Spot instances for processing** — V8 filter execution is stateless. If Azure evicts a spot VM, NATS simply re-delivers the message to another processing pod. Zero message loss, 60-90% cheaper compute.
+
+4. **NATS-native scaling** — Processing pods use NATS consumer groups. Add pods → automatic load balancing. Remove pods → remaining pods pick up slack. No partition rebalancing (unlike Kafka).
+
+5. **Aorta broker is always-on** — Capillary agents maintain persistent connections. Can't be on spot instances or scale-to-zero. Dedicated node affinity.
+
+**Cost breakdown:**
+- AKS cluster (2 system D4ds + 1 spot D4ds): ~$220/month
+- Cosmos DB (autoscale 4K RU): ~$200/month
+- Front Door: ~$40/month
+- Key Vault + Monitor + Blob: ~$40/month
+- **Total: ~$500/month** for 25M msgs/day with full HA
 
 ---
 
@@ -488,12 +703,17 @@ Keep NATS + custom Go services (they're already fast), but offload stateful stor
 | Metric | Self-Managed (VM) | Hybrid (AKS+Cosmos) | Full Cloud-Native |
 |---|---|---|---|
 | Throughput | 200 msgs/sec | 500 msgs/sec | 1000+ msgs/sec |
-| P99 Latency | 15ms | 10ms | 8ms |
+| P99 Latency (end-to-end) | 15ms | 20ms | 25ms |
+| P99 Latency (NATS only) | 0.5ms | 2ms | N/A (Event Hubs ~50ms) |
+| P99 Latency (DB write) | 2ms (ScyllaDB) | 15ms (Cosmos) | 15ms (Cosmos) |
 | Scale-up time | Manual (minutes) | 30 seconds (HPA) | 5 seconds (KEDA) |
 | Failover time | Manual / minutes | 30 seconds | Automatic / seconds |
+| Max burst absorption | 2x (RAM limited) | 10x (NATS file store) | 100x (Event Hubs) |
 | Ops burden | High (you manage everything) | Medium (manage NATS + apps) | Low (manage code only) |
-| Monthly cost | $150-400 | $300-500 | $400-600 |
+| Monthly cost | $150-400 | $400-600 | $500-800 |
 | Compliance | Self-attested | Inherited (AKS) | Inherited (PaaS) |
+
+**Key insight on latency:** The end-to-end latency for Arteria is dominated by V8 filter execution (~5ms) and DB writes. NATS adds <1ms in all configurations. Replacing NATS with Event Hubs adds ~50ms latency per message hop — this is why keeping NATS is the right call unless you need multi-region streaming.
 
 ---
 
@@ -502,15 +722,22 @@ Keep NATS + custom Go services (they're already fast), but offload stateful stor
 **Phase 1** (Current): Docker Compose on VM ✓
 **Phase 2** (Next): Move ScyllaDB → Cosmos DB (Cassandra API)
 - Change connection string in `scyllautil`
-- Same CQL schema works
+- Same CQL schema works (tested)
 - Delete ScyllaDB container
 - Gain: auto-scaling, backup, multi-region, no disk management
+- Effort: 1 day
 
-**Phase 3**: Move to Container Apps / Fargate
-- Convert docker-compose.yml to Container Apps YAML or ECS task definitions
-- Add KEDA scaling rules (scale processing on NATS queue depth)
-- Gain: auto-scale to zero overnight, burst handling, no VM patches
+**Phase 3**: Move to AKS with NATS Helm chart
+- Create AKS cluster (3 nodes)
+- Deploy NATS via Helm (5 minutes)
+- Convert docker-compose to Kubernetes manifests (Kompose or manual)
+- Add HPA for processing (scale on NATS pending messages)
+- Add spot node pool for processing
+- Gain: HA, auto-healing, burst scaling, spot pricing
+- Effort: 2-3 days
 
 **Phase 4** (Optional): Replace NATS with Event Hubs
-- Only if you need >10M msgs/sec or multi-region event streaming
-- NATS is already excellent — this is optional unless hitting limits
+- Only if you need multi-region event streaming or >50M msgs/sec
+- NATS single node already does 1.2M msgs/sec — you won't hit this limit
+- Event Hubs adds latency (50ms vs 0.5ms) — worse for real-time HL7
+- **Recommendation: Don't do this. NATS is better for this workload.**
