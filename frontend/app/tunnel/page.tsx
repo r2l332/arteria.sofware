@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
+import { getTunnelNodes, createTunnelNode, deleteTunnelNode, getTunnelMappings, createTunnelMapping } from '@/lib/api';
 
 interface TunnelNode {
   node_id: string;
@@ -38,22 +37,17 @@ export default function TunnelPage() {
   });
   const [enrollInfo, setEnrollInfo] = useState<{ token: string; nodeId: string } | null>(null);
 
-  const load = () => fetch(`${API_BASE}/tunnel/nodes`).then(r => r.json()).then(d => setNodes(d.nodes || []));
+  const load = () => getTunnelNodes().then(d => setNodes(d.nodes || [])).catch(console.error);
   useEffect(() => { load(); }, []);
 
   const selectNode = async (node: TunnelNode) => {
     setSelectedNode(node);
-    const res = await fetch(`${API_BASE}/tunnel/nodes/${node.node_id}/mappings`);
-    const data = await res.json();
+    const data = await getTunnelMappings(node.node_id);
     setMappings(data.mappings || []);
   };
 
   const createNode = async () => {
-    const res = await fetch(`${API_BASE}/tunnel/nodes`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
+    const data = await createTunnelNode(form);
     setEnrollInfo({ token: data.enrollment_token, nodeId: data.node_id });
     setShowCreate(false);
     load();
@@ -61,17 +55,14 @@ export default function TunnelPage() {
 
   const deleteNode = async (id: string) => {
     if (!confirm('Delete this tunnel node?')) return;
-    await fetch(`${API_BASE}/tunnel/nodes/${id}`, { method: 'DELETE' });
+    await deleteTunnelNode(id);
     if (selectedNode?.node_id === id) { setSelectedNode(null); setMappings([]); }
     load();
   };
 
-  const createMapping = async () => {
+  const createMappingFn = async () => {
     if (!selectedNode) return;
-    await fetch(`${API_BASE}/tunnel/nodes/${selectedNode.node_id}/mappings`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(mapForm),
-    });
+    await createTunnelMapping(selectedNode.node_id, mapForm);
     setShowMapping(false);
     selectNode(selectedNode);
   };
@@ -230,7 +221,7 @@ export default function TunnelPage() {
                       </div>
                       <div className="flex justify-end gap-2 mt-5">
                         <button onClick={() => setShowMapping(false)} className="px-4 py-2 text-sm text-arteria-muted">Cancel</button>
-                        <button onClick={createMapping} className="px-4 py-2 bg-arteria-accent text-white text-sm rounded">Create</button>
+                        <button onClick={createMappingFn} className="px-4 py-2 bg-arteria-accent text-white text-sm rounded">Create</button>
                       </div>
                     </div>
                   </div>

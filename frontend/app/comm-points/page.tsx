@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import { getCommPoints, getCPLogs, type CommPoint, type CPLogResponse } from '@/lib/api';
+import { getCommPoints, createCommPoint, updateCommPoint, deleteCommPoint, getCPLogs, getTunnelNodes, type CommPoint, type CPLogResponse } from '@/lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
@@ -47,7 +47,7 @@ export default function CommPointsPage() {
 
   const load = () => {
     getCommPoints().then((r) => setPoints(r.communication_points)).catch(console.error);
-    fetch(`${API_BASE}/tunnel/nodes`).then(r => r.json()).then(d => setTunnelNodes(d.nodes || [])).catch(() => {});
+    getTunnelNodes().then(d => setTunnelNodes(d.nodes || [])).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
@@ -76,9 +76,11 @@ export default function CommPointsPage() {
 
   const save = async () => {
     setSaving(true);
-    const method = editingId ? 'PUT' : 'POST';
-    const url = editingId ? `${API_BASE}/comm-points/${editingId}` : `${API_BASE}/comm-points`;
-    await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+    if (editingId) {
+      await updateCommPoint(editingId, form);
+    } else {
+      await createCommPoint(form);
+    }
     setSaving(false);
     setShowForm(false);
     load();
@@ -86,7 +88,7 @@ export default function CommPointsPage() {
 
   const remove = async (id: string) => {
     if (!confirm('Delete this communication point?')) return;
-    await fetch(`${API_BASE}/comm-points/${id}`, { method: 'DELETE' });
+    await deleteCommPoint(id);
     load();
   };
 

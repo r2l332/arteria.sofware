@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
-import { getRoutes, getFilters, getCommPoints, createFilter, updateFilter, createRoute, type Route, type Filter, type CommPoint } from '@/lib/api';
+import { getRoutes, getFilters, getCommPoints, createFilter, updateFilter, createRoute, updateRoute, deleteRoute, type Route, type Filter, type CommPoint } from '@/lib/api';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -111,7 +111,7 @@ export default function RoutesPage() {
   const saveRoute = async () => {
     setSaving(true);
     if (editingRouteId) {
-      await fetch(`${API_BASE}/routes/${editingRouteId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(routeForm) });
+      await updateRoute(editingRouteId, routeForm);
     } else {
       await createRoute(routeForm);
     }
@@ -121,7 +121,7 @@ export default function RoutesPage() {
   };
   const deleteRouteById = async (id: string) => {
     if (!confirm('Delete this route and all its filters?')) return;
-    await fetch(`${API_BASE}/routes/${id}`, { method: 'DELETE' });
+    await deleteRoute(id);
     if (selectedRoute?.route_id === id) { setSelectedRoute(null); setFilters([]); }
     loadRoutes();
   };

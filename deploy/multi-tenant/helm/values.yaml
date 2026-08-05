@@ -1,0 +1,156 @@
+# Arteria Multi-Tenant — Helm Values for AKS Production
+# Deploy: helm install arteria ./helm -f values.yaml
+
+replicaCount:
+  ingestion: 2
+  processing: 4
+  api: 2
+  frontend: 1
+  aorta: 1
+
+image:
+  registry: arteriacr.azurecr.io
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# --- NATS (deployed via nats/nats Helm chart as dependency) ---
+nats:
+  enabled: true
+  cluster:
+    enabled: true
+    replicas: 3
+  jetstream:
+    enabled: true
+    memStorage:
+      size: 2Gi
+    fileStorage:
+      enabled: true
+      size: 50Gi
+      storageClassName: managed-premium-retain
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# --- Storage (Cosmos DB — external, not deployed by Helm) ---
+cosmosdb:
+  # Connection details provided via Azure Key Vault CSI
+  host: "arteria-cosmos.cassandra.cosmos.azure.com"
+  port: 10350
+  secretName: "arteria-cosmos-credentials"
+
+# --- Multi-Tenancy ---
+multiTenant:
+  enabled: true
+  # Tenant isolation mode:
+  #   keyspace  = shared Cosmos account, separate keyspace per tenant (standard)
+  #   account   = separate Cosmos account per tenant (premium)
+  isolationMode: "keyspace"
+
+  # Platform admin credentials (stored in Key Vault)
+  platformAdminSecret: "arteria-platform-admin"
+
+  # Tenant provisioning
+  maxTenantsPerCluster: 100
+  defaultTier: "starter"
+
+# --- Ingress (Azure Front Door configured externally) ---
+ingress:
+  enabled: true
+  className: "azure-application-gateway"
+  annotations:
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
+    appgw.ingress.kubernetes.io/connection-draining: "true"
+  hosts:
+    - host: "*.arteria.cloud"
+      paths:
+        - path: /
+          pathType: Prefix
+          service: frontend
+        - path: /api
+          pathType: Prefix
+          service: api
+
+# --- Aorta broker (TCP, needs separate ingress) ---
+aorta:
+  service:
+    type: LoadBalancer
+    port: 9443
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz"
+
+# --- Autoscaling ---
+autoscaling:
+  processing:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    # Scale on NATS pending message count (via KEDA)
+    natsStreamLag:
+      threshold: 1000
+
+  ingestion:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPU: 70
+
+  api:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    targetCPU: 80
+
+# --- Spot instances for processing ---
+processing:
+  tolerations:
+    - key: "kubernetes.azure.com/scalesetpriority"
+      operator: "Equal"
+      value: "spot"
+      effect: "NoSchedule"
+  nodeSelector:
+    agentpool: "spot"
+
+# --- Security ---
+security:
+  # Azure Key Vault CSI driver
+  keyVault:
+    enabled: true
+    vaultName: "arteria-kv-prod"
+    tenantId: ""
+    secrets:
+      - name: jwt-signing-key
+        key: jwt-secret
+      - name: cosmos-username
+        key: cosmos-username
+      - name: cosmos-password
+        key: cosmos-password
+
+  # Network policies
+  networkPolicy:
+    enabled: true
+    # Only allow:
+    # ingestion ← external (MLLP port)
+    # api ← ingress controller
+    # processing → nats, cosmosdb
+    # aorta ← external (tunnel port)
+
+  # Pod security
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+
+# --- Monitoring ---
+monitoring:
+  appInsights:
+    enabled: true
+    connectionStringSecret: "arteria-appinsights"
+  prometheus:
+    enabled: true
+    serviceMonitor: true

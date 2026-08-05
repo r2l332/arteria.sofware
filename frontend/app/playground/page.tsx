@@ -3,10 +3,9 @@
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
+import { apiFetch } from '@/lib/api';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
 const DEFAULT_SCRIPT = `// Write your JS filter and click "Run" to test it
 // The message object is available as 'msg'
@@ -55,12 +54,10 @@ export default function PlaygroundPage() {
     const start = performance.now();
 
     try {
-      const res = await fetch(`${API_BASE}/playground/execute`, {
+      const data = await apiFetch<any>('/playground/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ script, filter_type: 'javascript', payload }),
       });
-      const data = await res.json();
       const elapsed = performance.now() - start;
       setExecTime(elapsed);
 

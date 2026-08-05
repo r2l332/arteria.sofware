@@ -9,7 +9,7 @@ function getAuthToken(): string | null {
   return null;
 }
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -69,6 +69,31 @@ export const updateFilter = (filterId: string, data: FilterPayload) =>
 // --- Communication Points ---
 export const getCommPoints = () =>
   apiFetch<{ communication_points: CommPoint[]; count: number }>('/comm-points');
+
+export const createCommPoint = (data: any) =>
+  apiFetch<{ comm_point_id: string }>('/comm-points', { method: 'POST', body: JSON.stringify(data) });
+
+export const updateCommPoint = (id: string, data: any) =>
+  apiFetch<{ status: string }>(`/comm-points/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+
+export const deleteCommPoint = (id: string) =>
+  apiFetch<{ status: string }>(`/comm-points/${id}`, { method: 'DELETE' });
+
+// --- Tunnel Nodes ---
+export const getTunnelNodes = () =>
+  apiFetch<{ nodes: any[]; count: number }>('/tunnel/nodes');
+
+export const createTunnelNode = (data: any) =>
+  apiFetch<{ node_id: string; enrollment_token: string }>('/tunnel/nodes', { method: 'POST', body: JSON.stringify(data) });
+
+export const deleteTunnelNode = (id: string) =>
+  apiFetch<{ status: string }>(`/tunnel/nodes/${id}`, { method: 'DELETE' });
+
+export const getTunnelMappings = (nodeId: string) =>
+  apiFetch<{ mappings: any[] }>(`/tunnel/nodes/${nodeId}/mappings`);
+
+export const createTunnelMapping = (nodeId: string, data: any) =>
+  apiFetch<{ status: string }>(`/tunnel/nodes/${nodeId}/mappings`, { method: 'POST', body: JSON.stringify(data) });
 
 // --- Lookup Tables ---
 export const getLookupTables = () =>

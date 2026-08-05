@@ -1,0 +1,140 @@
+# Arteria Multi-Tenant SaaS Platform
+# This compose file is for LOCAL DEVELOPMENT of the multi-tenant platform.
+# Production deploys to AKS via Helm charts (see helm/ directory).
+
+services:
+  nats:
+    image: nats:2-alpine
+    container_name: arteria-mt-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
+    volumes:
+      - mt_nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  scylladb:
+    image: scylladb/scylla:latest
+    container_name: arteria-mt-scylladb
+    ports:
+      - "9042:9042"
+    command: ["--developer-mode", "1", "--smp", "1", "--memory", "512M"]
+    volumes:
+      - mt_scylla_data:/var/lib/scylla
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  scylla-init:
+    image: scylladb/scylla:latest
+    container_name: arteria-mt-scylla-init
+    depends_on:
+      scylladb:
+        condition: service_healthy
+    volumes:
+      - ../../infra/cql:/cql
+      - ../../infra/scripts:/scripts
+    entrypoint: ["/bin/bash", "/scripts/init-schema.sh"]
+    restart: "no"
+
+  # --- Multi-tenant API (tenant-aware middleware) ---
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.api
+    container_name: arteria-mt-api
+    ports:
+      - "8080:8080"
+    environment:
+      NATS_URL: nats://nats:4222
+      SCYLLA_HOST: scylladb
+      API_PORT: "8080"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-arteria123}
+      MULTI_TENANT: "true"
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    depends_on:
+      scylla-init:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ingestion:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.ingestion
+    container_name: arteria-mt-ingestion
+    ports:
+      - "2575:2575"
+    environment:
+      NATS_URL: nats://nats:4222
+      INGESTION_PORT: "2575"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MULTI_TENANT: "true"
+    depends_on:
+      - nats
+    restart: unless-stopped
+
+  processing:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.processing
+    container_name: arteria-mt-processing
+    environment:
+      NATS_URL: nats://nats:4222
+      SCYLLA_HOST: scylladb
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENABLE_PLUGINS: routes-js
+      MULTI_TENANT: "true"
+    depends_on:
+      scylla-init:
+        condition: service_completed_successfully
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../../frontend
+    container_name: arteria-mt-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      MULTI_TENANT: "true"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  tunnel-broker:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile.tunnel-broker
+    container_name: arteria-mt-tunnel-broker
+    ports:
+      - "9443:9443"
+    environment:
+      NATS_URL: nats://nats:4222
+      SCYLLA_HOST: scylladb
+      BROKER_PORT: "9443"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MULTI_TENANT: "true"
+    depends_on:
+      - nats
+      - scylladb
+    restart: unless-stopped
+
+volumes:
+  mt_nats_data:
+  mt_scylla_data:
