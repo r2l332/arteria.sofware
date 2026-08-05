@@ -25,12 +25,14 @@ type Agent struct {
 	mu         sync.Mutex
 	quit       chan struct{}
 	configDir  string
+	ACKMode   bool // If true, send MLLP ACK to sender after forwarding
 }
 
 // AgentConfig holds agent configuration.
 type AgentConfig struct {
 	BrokerAddr string
 	ConfigDir  string // Directory to store certs and config
+	ACKMode   bool   // Send MLLP ACK after forwarding
 }
 
 // NewAgent creates and connects a tunnel agent.
@@ -40,6 +42,7 @@ func NewAgent(cfg AgentConfig) *Agent {
 		configDir:  cfg.ConfigDir,
 		listeners:  make(map[int]net.Listener),
 		quit:       make(chan struct{}),
+		ACKMode:   cfg.ACKMode,
 	}
 }
 
@@ -339,11 +342,73 @@ func (a *Agent) tunnelToHost(local net.Conn, targetPort int) {
 		return
 	}
 
-	// Relay bidirectionally
-	done := make(chan struct{}, 2)
-	go func() { io.Copy(stream, local); done <- struct{}{} }()
-	go func() { io.Copy(local, stream); done <- struct{}{} }()
-	<-done
+	if a.ACKMode {
+		// ACK mode: read the full MLLP message, forward it, then send ACK back
+		buf := make([]byte, 65536)
+		n, err := local.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		data := buf[:n]
+
+		// Forward to broker via tunnel
+		if _, err := stream.Write(data); err != nil {
+			return
+		}
+
+		// Send MLLP ACK back to the sender
+		ack := buildMLLPAck(data)
+		local.Write(ack)
+	} else {
+		// Passthrough mode: relay bidirectionally (no ACK)
+		done := make(chan struct{}, 2)
+		go func() { io.Copy(stream, local); done <- struct{}{} }()
+		go func() { io.Copy(local, stream); done <- struct{}{} }()
+		<-done
+	}
+}
+
+// buildMLLPAck generates a minimal MLLP ACK response for the given HL7 message.
+func buildMLLPAck(data []byte) []byte {
+	// Extract message control ID from MSH-10 (field 10, pipe-delimited)
+	msgID := "0"
+	if len(data) > 1 {
+		raw := data
+		// Skip start block 0x0B if present
+		if raw[0] == 0x0B {
+			raw = raw[1:]
+		}
+		fields := splitHL7Field(raw, '|')
+		if len(fields) > 9 {
+			msgID = string(fields[9])
+		}
+	}
+
+	ack := fmt.Sprintf("MSH|^~\\&|ARTERIA|ACK|||%s||ACK|%s|P|2.3\rMSA|AA|%s\r",
+		time.Now().Format("20060102150405"), msgID, msgID)
+
+	// Wrap in MLLP framing
+	var buf []byte
+	buf = append(buf, 0x0B)
+	buf = append(buf, []byte(ack)...)
+	buf = append(buf, 0x1C, 0x0D)
+	return buf
+}
+
+// splitHL7Field splits on a delimiter, stopping at \r
+func splitHL7Field(data []byte, delim byte) [][]byte {
+	var fields [][]byte
+	start := 0
+	for i, b := range data {
+		if b == delim {
+			fields = append(fields, data[start:i])
+			start = i + 1
+		} else if b == '\r' || b == 0x1C {
+			fields = append(fields, data[start:i])
+			break
+		}
+	}
+	return fields
 }
 
 // Stop shuts down the agent.

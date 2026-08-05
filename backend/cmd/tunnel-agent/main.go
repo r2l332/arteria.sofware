@@ -20,10 +20,12 @@ func main() {
 
 	brokerAddr := envOr("BROKER_ADDR", "localhost:9443")
 	configDir := envOr("AGENT_CONFIG_DIR", "/etc/arteria-agent")
+	ackMode := envOr("ACK_MODE", "false") == "true"
 
 	agent := tunnel.NewAgent(tunnel.AgentConfig{
 		BrokerAddr: brokerAddr,
 		ConfigDir:  configDir,
+		ACKMode:   ackMode,
 	})
 
 	switch os.Args[1] {
