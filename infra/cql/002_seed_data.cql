@@ -13,24 +13,24 @@ VALUES (
     30000,
     toTimestamp(now()),
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
--- Seed: Default Output Communication Point
+-- Seed: Default Output Communication Point (Discard sink — change via UI)
 INSERT INTO arteria.communication_points (comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, created_at, updated_at)
 VALUES (
     a1000000-0000-0000-0000-000000000002,
-    'Default Output',
+    'Default Output (Discard)',
     'OUTPUT',
-    'MLLP',
-    'localhost',
-    2576,
+    'DISCARD',
+    '',
+    0,
     true,
-    3,
-    1000,
-    30000,
+    0,
+    0,
+    0,
     toTimestamp(now()),
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 -- Seed: Default ADT Route
 INSERT INTO arteria.routes (route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, created_at, updated_at)
@@ -45,7 +45,7 @@ VALUES (
     true,
     toTimestamp(now()),
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 -- Seed: Catch-all Route
 INSERT INTO arteria.routes (route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, created_at, updated_at)
@@ -60,7 +60,7 @@ VALUES (
     true,
     toTimestamp(now()),
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 -- Seed: Sample JS Transform Filter on ADT Route
 INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, is_active, created_at)
@@ -73,7 +73,7 @@ VALUES (
     'function transform(msg) { msg.properties.processed_by = "arteria"; msg.properties.processed_at = new Date().toISOString(); return msg; }',
     true,
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 INSERT INTO arteria.filters_by_id (filter_id, route_id, name, filter_type, execution_order, js_script, is_active, created_at)
 VALUES (
@@ -85,7 +85,7 @@ VALUES (
     'function transform(msg) { msg.properties.processed_by = "arteria"; msg.properties.processed_at = new Date().toISOString(); return msg; }',
     true,
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 -- Seed: Conditional Filter (example: drop messages without patient ID)
 INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, is_active, created_at)
@@ -98,7 +98,7 @@ VALUES (
     'function evaluate(msg) { if (!msg.patientId || msg.patientId === "") { return { action: "reject", reason: "Missing Patient ID" }; } return { action: "pass" }; }',
     true,
     toTimestamp(now())
-);
+) IF NOT EXISTS;
 
 INSERT INTO arteria.filters_by_id (filter_id, route_id, name, filter_type, execution_order, js_script, is_active, created_at)
 VALUES (
@@ -110,4 +110,4 @@ VALUES (
     'function evaluate(msg) { if (!msg.patientId || msg.patientId === "") { return { action: "reject", reason: "Missing Patient ID" }; } return { action: "pass" }; }',
     true,
     toTimestamp(now())
-);
+) IF NOT EXISTS;
