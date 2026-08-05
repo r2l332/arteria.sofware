@@ -1,4 +1,9 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : 'http://localhost:8080/api/v1');
+function getApiBase(): string {
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api/v1`;
+  }
+  return '/api/v1';
+}
 
 function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -17,7 +22,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     ...(init?.headers as Record<string, string> || {}),
   };
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${getApiBase()}${path}`, { ...init, headers });
 
   if (res.status === 401) {
     // Token expired — clear auth and redirect to login

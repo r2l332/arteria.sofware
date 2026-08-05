@@ -4,7 +4,7 @@ import { useState, FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
 import { ShieldAlert, Check, AlertCircle } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : 'http://localhost:8080/api/v1');
+const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
 
 export default function ForceChangePassword() {
   const { token, clearMustChangePassword } = useAuth();

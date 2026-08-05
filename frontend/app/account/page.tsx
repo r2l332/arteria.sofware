@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import { PageHeader } from '@/components/ui';
 import { Key, CheckCircle2, AlertCircle, Shield } from 'lucide-react';
 
-const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : 'http://localhost:8080/api/v1';
+const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
 
 function getToken() {
   try { return JSON.parse(localStorage.getItem('arteria_auth') || '{}').token; } catch { return ''; }

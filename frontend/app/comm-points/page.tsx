@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { getCommPoints, createCommPoint, updateCommPoint, deleteCommPoint, getCPLogs, getTunnelNodes, type CommPoint, type CPLogResponse } from '@/lib/api';
 
-const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : 'http://localhost:8080/api/v1';
+const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
 
 interface CommPointForm {
   name: string;

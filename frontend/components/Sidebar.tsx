@@ -24,7 +24,7 @@ import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
+const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
 
 interface NavItem {
   href: string;
