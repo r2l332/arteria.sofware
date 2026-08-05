@@ -21,7 +21,7 @@ Returns service health status.
 
 ## Communication Points
 
-Communication points represent inbound/outbound endpoints (equivalent to Rhapsody Communication Points).
+Communication points represent inbound/outbound endpoints for message transport.
 
 ### `GET /api/v1/comm-points`
 
@@ -252,7 +252,7 @@ Delete a filter by route ID and execution order.
 
 ## Lookup Tables
 
-Shared key-value data accessible from lookup filters (equivalent to Rhapsody Locker Variables).
+Shared key-value data accessible from lookup filters.
 
 ### `GET /api/v1/lookups`
 

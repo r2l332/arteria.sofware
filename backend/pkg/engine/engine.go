@@ -14,7 +14,6 @@ import (
 )
 
 // MessageEnvelope is the data structure that flows through the filter chain.
-// It mirrors Rhapsody's message object with properties.
 type MessageEnvelope struct {
 	MessageID       string            `json:"messageId"`
 	MessageType     string            `json:"messageType"`

@@ -81,7 +81,7 @@ Click outside the modal or press ✕ to close.
 
 **URL:** `/routes`
 
-This is the core configuration screen — equivalent to Rhapsody's Route Editor. The page has three panels.
+This is the core configuration screen — the Route Editor. The page has three panels.
 
 ### Left Panel — Route List
 
@@ -203,7 +203,7 @@ Filters run sequentially by `execution_order`. If a conditional filter rejects, 
 
 **URL:** `/comm-points`
 
-Communication points define how Arteria connects to external systems — equivalent to Rhapsody Communication Points.
+Communication points define how Arteria connects to external systems.
 
 ### Left Panel — CP List
 
@@ -239,7 +239,7 @@ Each CP card in the list shows which Capillary agent it is connected through:
 
 ### Right Panel — Live CP Log Viewer
 
-Click any communication point to see its live log stream. This is equivalent to Rhapsody's "View Communication Point Log".
+Click any communication point to see its live log stream.
 
 **Log display:**
 - Each entry shows: timestamp, log level, message, message ID, size

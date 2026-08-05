@@ -1,7 +1,7 @@
 CREATE KEYSPACE IF NOT EXISTS arteria WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1} AND tablets = {'enabled': false};
 
 -- ============================================================
--- Communication Points (Rhapsody equivalent)
+-- Communication Points
 -- Configurable inbound/outbound endpoints
 -- ============================================================
 CREATE TABLE IF NOT EXISTS arteria.communication_points (
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS arteria.routes (
 
 -- ============================================================
 -- Filters (ordered processing steps within a route)
--- Rhapsody: JS Filter, Mapper, Conditional, DB Lookup, etc.
+-- Types: JS Transform, Conditional Router, Lookup Enrichment
 -- ============================================================
 CREATE TABLE IF NOT EXISTS arteria.filters (
     filter_id uuid,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS arteria.filters_by_id (
 );
 
 -- ============================================================
--- Lookup Tables (Rhapsody "Locker Variables")
+-- Lookup Tables
 -- Shared key-value data accessible from JS filters
 -- ============================================================
 CREATE TABLE IF NOT EXISTS arteria.lookup_tables (
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS arteria.messages (
     sending_facility text,
     raw_payload text,
     transformed_payload text,
-    properties text,          -- JSON map of message properties (Rhapsody msg.getProperty())
+    properties text,          -- JSON map of message properties
     status text,              -- RECEIVED, FILTERING, FILTERED, ROUTED, DELIVERED, ERROR, DLQ
     created_at timestamp,
     updated_at timestamp,

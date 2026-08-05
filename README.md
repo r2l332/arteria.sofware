@@ -1,6 +1,6 @@
 # Arteria.app
 
-A high-throughput, cloud-native HL7v2/FHIR/DICOM interoperability engine designed for 25M+ messages/day. Inspired by Rhapsody Integration Engine, built for speed — with an encrypted tunnel mesh that eliminates the need for VPNs, and enterprise-grade security for healthcare environments.
+A high-throughput, cloud-native HL7v2/FHIR/DICOM interoperability engine designed for 25M+ messages/day. Built for speed — with an encrypted tunnel mesh that eliminates the need for VPNs, and enterprise-grade security for healthcare environments.
 
 ## Architecture
 
