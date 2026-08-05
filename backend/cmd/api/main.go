@@ -752,18 +752,44 @@ func listMessages(session *gocql.Session) fiber.Handler {
 		if limit > 200 {
 			limit = 200
 		}
+
+		// Query messages_by_status for ROUTED messages (newest first)
+		// This table has created_at as clustering key = sorted by time
 		var items []fiber.Map
-		iter := session.Query(`SELECT message_id, patient_id, message_type, trigger_event, sending_facility, status, created_at FROM arteria.messages LIMIT ?`, limit).Iter()
-		var id gocql.UUID
-		var pid, mt, te, sf, st string
-		var ca time.Time
-		for iter.Scan(&id, &pid, &mt, &te, &sf, &st, &ca) {
-			items = append(items, fiber.Map{
-				"message_id": id.String(), "patient_id": pid, "message_type": mt,
-				"trigger_event": te, "sending_facility": sf, "status": st, "created_at": ca,
-			})
+		for _, status := range []string{"ROUTED", "DELIVERED", "RECEIVED", "ERROR"} {
+			iter := session.Query(`SELECT message_id, created_at, message_type, patient_id FROM arteria.messages_by_status WHERE status = ? LIMIT ?`, status, limit).Iter()
+			var id gocql.UUID
+			var pid, mt string
+			var ca time.Time
+			for iter.Scan(&id, &ca, &mt, &pid) {
+				items = append(items, fiber.Map{
+					"message_id": id.String(), "patient_id": pid, "message_type": mt,
+					"status": status, "created_at": ca,
+				})
+			}
+			iter.Close()
 		}
-		iter.Close()
+
+		// Sort by created_at descending (newest first)
+		sortByTime(items)
+
+		// Trim to limit
+		if len(items) > limit {
+			items = items[:limit]
+		}
+
+		// Enrich with full details from messages table
+		for i, item := range items {
+			msgID, _ := gocql.ParseUUID(item["message_id"].(string))
+			var te, sf, st string
+			session.Query(`SELECT trigger_event, sending_facility, status FROM arteria.messages WHERE message_id = ?`, msgID).Scan(&te, &sf, &st)
+			items[i]["trigger_event"] = te
+			items[i]["sending_facility"] = sf
+			if st != "" {
+				items[i]["status"] = st
+			}
+		}
+
 		if items == nil {
 			items = []fiber.Map{}
 		}
@@ -886,6 +912,18 @@ func orDefault(val, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func sortByTime(items []fiber.Map) {
+	for i := 0; i < len(items); i++ {
+		for j := i + 1; j < len(items); j++ {
+			ti, _ := items[i]["created_at"].(time.Time)
+			tj, _ := items[j]["created_at"].(time.Time)
+			if tj.After(ti) {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
 }
 
 // ==================== Config Export/Import ====================
