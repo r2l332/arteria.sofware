@@ -36,22 +36,26 @@ const (
 
 // OutputCP represents a configured output communication point.
 type OutputCP struct {
-	CommPointID    string
-	Name           string
-	Protocol       string // MLLP, HTTP, WEBHOOK, REST, DISCARD
-	Host           string
-	Port           int
-	MaxRetries     int
-	RetryDelayMs   int
-	TimeoutMs      int
-	IsActive       bool
-	DestTopic      string // which route topic this CP handles
+	CommPointID      string
+	Name             string
+	Protocol         string // MLLP, HTTP, WEBHOOK, REST, DISCARD
+	Host             string
+	Port             int
+	MaxRetries       int
+	RetryDelayMs     int
+	TimeoutMs        int
+	IsActive         bool
+	DestTopic        string // which route topic this CP handles
+	TunnelEnabled    bool
+	TunnelNodeID     string
+	TunnelLocalPort  int
 }
 
 var (
 	log *logging.Logger
 	met *metrics.Counters
 
+	natsConn    *nats.Conn
 	outputCPs   []OutputCP
 	outputCPsMu sync.RWMutex
 )
@@ -80,6 +84,7 @@ func main() {
 		log.Fatal("failed to connect to NATS", logging.Fields{"error": err.Error()})
 	}
 	defer nc.Close()
+	natsConn = nc
 
 	// Connect to ScyllaDB
 	scyllaCfg := scyllautil.DefaultConfig()
@@ -221,6 +226,11 @@ func handleRoutedMessage(m *nats.Msg, session *gocql.Session) {
 
 // deliver sends a message to an output CP based on its protocol.
 func deliver(cp OutputCP, payload []byte) error {
+	// If tunnel-enabled, route through the Aorta mesh instead of direct delivery
+	if cp.TunnelEnabled && cp.TunnelNodeID != "" && cp.TunnelNodeID != "00000000-0000-0000-0000-000000000000" {
+		return deliverViaTunnel(cp, payload)
+	}
+
 	timeout := time.Duration(cp.TimeoutMs) * time.Millisecond
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -238,6 +248,57 @@ func deliver(cp OutputCP, payload []byte) error {
 	default:
 		return fmt.Errorf("unsupported protocol: %s", cp.Protocol)
 	}
+}
+
+// deliverViaTunnel routes a message through the Aorta tunnel mesh to a remote Capillary agent.
+// It publishes a request to NATS that the tunnel-broker picks up and forwards via yamux stream.
+func deliverViaTunnel(cp OutputCP, payload []byte) error {
+	targetPort := cp.TunnelLocalPort
+	if targetPort == 0 {
+		targetPort = cp.Port
+	}
+
+	// Build the tunnel delivery request
+	req := struct {
+		NodeID     string `json:"node_id"`
+		TargetPort int    `json:"target_port"`
+		Protocol   string `json:"protocol"`
+		Payload    []byte `json:"payload"`
+	}{
+		NodeID:     cp.TunnelNodeID,
+		TargetPort: targetPort,
+		Protocol:   cp.Protocol,
+		Payload:    payload,
+	}
+
+	data, _ := json.Marshal(req)
+
+	// Request/reply to broker — wait up to 10s for delivery confirmation
+	msg, err := natsConn.Request("arteria.tunnel.deliver", data, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("tunnel delivery to node %s port %d: %w", cp.TunnelNodeID, targetPort, err)
+	}
+
+	// Check response
+	var resp struct {
+		Success bool   `json:"success"`
+		Error   string `json:"error,omitempty"`
+	}
+	if json.Unmarshal(msg.Data, &resp) != nil || !resp.Success {
+		errMsg := resp.Error
+		if errMsg == "" {
+			errMsg = "unknown error"
+		}
+		return fmt.Errorf("tunnel delivery failed: %s", errMsg)
+	}
+
+	log.Info("message delivered via tunnel", logging.Fields{
+		"comm_point": cp.Name,
+		"node_id":    cp.TunnelNodeID,
+		"port":       targetPort,
+		"size":       len(payload),
+	})
+	return nil
 }
 
 // deliverMLLP sends a message via MLLP (HL7 TCP framing).
@@ -324,26 +385,29 @@ func updateDeliveryStatus(session *gocql.Session, payload []byte, status, errDet
 // loadOutputCPs loads OUTPUT communication points from ScyllaDB.
 func loadOutputCPs(session *gocql.Session) {
 	var cps []OutputCP
-	iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms FROM arteria.communication_points`).Iter()
+	iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, tunnel_enabled, tunnel_node_id, tunnel_local_port FROM arteria.communication_points`).Iter()
 
-	var id gocql.UUID
+	var id, tunnelNodeID gocql.UUID
 	var name, direction, protocol, host string
-	var port, maxRetries, retryDelay, timeout int
-	var isActive bool
+	var port, maxRetries, retryDelay, timeout, tunnelLocalPort int
+	var isActive, tunnelEnabled bool
 
-	for iter.Scan(&id, &name, &direction, &protocol, &host, &port, &isActive, &maxRetries, &retryDelay, &timeout) {
+	for iter.Scan(&id, &name, &direction, &protocol, &host, &port, &isActive, &maxRetries, &retryDelay, &timeout, &tunnelEnabled, &tunnelNodeID, &tunnelLocalPort) {
 		if direction == "OUTPUT" && isActive {
 			cps = append(cps, OutputCP{
-				CommPointID:  id.String(),
-				Name:         name,
-				Protocol:     protocol,
-				Host:         host,
-				Port:         port,
-				MaxRetries:   maxRetries,
-				RetryDelayMs: retryDelay,
-				TimeoutMs:    timeout,
-				IsActive:     isActive,
-				DestTopic:    "*", // TODO: add dest_topic field to CP config
+				CommPointID:     id.String(),
+				Name:            name,
+				Protocol:        protocol,
+				Host:            host,
+				Port:            port,
+				MaxRetries:      maxRetries,
+				RetryDelayMs:    retryDelay,
+				TimeoutMs:       timeout,
+				IsActive:        isActive,
+				DestTopic:       "*", // TODO: add dest_topic field to CP config
+				TunnelEnabled:   tunnelEnabled,
+				TunnelNodeID:    tunnelNodeID.String(),
+				TunnelLocalPort: tunnelLocalPort,
 			})
 		}
 	}

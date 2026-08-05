@@ -286,6 +286,10 @@ export default function RoutesPage() {
                         <option value="javascript">JavaScript Transform</option>
                         <option value="conditional">Conditional Router</option>
                         <option value="lookup">Lookup Enrichment</option>
+                        <option value="python">Python Script</option>
+                        <option value="bash">Bash Script</option>
+                        <option value="powershell">PowerShell Script</option>
+                        <option value="dotnet">.NET Script (C#)</option>
                       </select>
                       <label className="flex items-center gap-1.5 text-sm text-arteria-muted">
                         <input
@@ -309,7 +313,7 @@ export default function RoutesPage() {
                   <div className="flex-1">
                     <MonacoEditor
                       height="100%"
-                      language="javascript"
+                      language={editingFilter?.filter_type === 'python' ? 'python' : editingFilter?.filter_type === 'bash' ? 'shell' : editingFilter?.filter_type === 'powershell' ? 'powershell' : editingFilter?.filter_type === 'dotnet' ? 'csharp' : 'javascript'}
                       theme="vs-dark"
                       value={editorValue}
                       onChange={(v) => setEditorValue(v || '')}
@@ -353,6 +357,50 @@ function evaluate(msg) {
   }
   return { action: "pass" };
 }`;
+    case 'python':
+      return `# Python transform filter
+# Input: message JSON on stdin
+# Output: transformed message JSON on stdout
+import sys, json
+
+msg = json.load(sys.stdin)
+
+# Transform the message
+msg['properties']['processed_at'] = __import__('datetime').datetime.now().isoformat()
+msg['properties']['filter_lang'] = 'python'
+
+# Output the transformed message
+print(json.dumps(msg))`;
+    case 'bash':
+      return `#!/bin/bash
+# Bash transform filter
+# Input: message JSON on stdin
+# Output: transformed message JSON on stdout
+# Requires: jq
+
+INPUT=$(cat)
+echo "$INPUT" | jq '.properties.processed_at = now | tostring | .properties.filter_lang = "bash"'`;
+    case 'powershell':
+      return `# PowerShell transform filter
+# Input: message JSON on stdin
+# Output: transformed message JSON on stdout
+
+$msg = $input | ConvertFrom-Json
+$msg.properties.processed_at = (Get-Date).ToString("o")
+$msg.properties.filter_lang = "powershell"
+$msg | ConvertTo-Json -Compress`;
+    case 'dotnet':
+      return `// .NET Script (C#) transform filter
+// Input: message JSON on stdin
+// Output: transformed message JSON on stdout
+
+using System;
+using System.Text.Json;
+
+var input = Console.In.ReadToEnd();
+var msg = JsonSerializer.Deserialize<JsonElement>(input);
+// Transform and output
+Console.Write(input);`;
     case 'javascript':
     default:
       return `// Transform filter: modify the message and return it

@@ -150,6 +150,35 @@ func main() {
 		}
 	})
 
+	// Listen for tunnel delivery requests from the egress service
+	nc.Subscribe("arteria.tunnel.deliver", func(msg *nats.Msg) {
+		var req struct {
+			NodeID     string          `json:"node_id"`
+			TargetPort int             `json:"target_port"`
+			Protocol   string          `json:"protocol"`
+			Payload    json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": "invalid request"})
+			msg.Respond(resp)
+			return
+		}
+
+		log.Printf("[BROKER] tunnel deliver: node=%s port=%d protocol=%s size=%d", req.NodeID, req.TargetPort, req.Protocol, len(req.Payload))
+		brokerBytesOut.Add(int64(len(req.Payload)))
+
+		if err := broker.OpenStream(req.NodeID, req.TargetPort, req.Payload); err != nil {
+			log.Printf("[BROKER] tunnel deliver failed: %v", err)
+			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": err.Error()})
+			msg.Respond(resp)
+			return
+		}
+
+		brokerMsgsRouted.Add(1)
+		resp, _ := json.Marshal(map[string]interface{}{"success": true})
+		msg.Respond(resp)
+	})
+
 	log.Printf("[BROKER] tunnel broker started on %s", listenAddr)
 
 	sigCh := make(chan os.Signal, 1)

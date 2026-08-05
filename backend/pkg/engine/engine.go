@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os/exec"
 	"sort"
 	"sync"
 	"time"
@@ -202,6 +204,8 @@ func (e *Engine) executeFilterChain(ctx context.Context, route *Route, envelope 
 			result, err = e.executeConditionalFilter(ctx, &filter, current)
 		case "lookup":
 			result, err = e.executeLookupFilter(&filter, current)
+		case "python", "bash", "powershell", "dotnet":
+			result, err = e.executeScriptFilter(ctx, &filter, current)
 		default:
 			log.Printf("[ENGINE] unknown filter type %q, skipping", filter.FilterType)
 			continue
@@ -388,4 +392,79 @@ func (e *Engine) GetRoutes() []Route {
 	result := make([]Route, len(e.routes))
 	copy(result, e.routes)
 	return result
+}
+
+// executeScriptFilter runs a Python/Bash/PowerShell/.NET script as a subprocess.
+// The message is passed as JSON on stdin, the transformed message is read from stdout.
+func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelope *MessageEnvelope) (*FilterResult, error) {
+	// Determine the interpreter
+	var cmd string
+	var args []string
+	switch filter.FilterType {
+	case "python":
+		cmd = "python3"
+		args = []string{"-c", filter.JSScript}
+	case "bash":
+		cmd = "bash"
+		args = []string{"-c", filter.JSScript}
+	case "powershell":
+		cmd = "pwsh"
+		args = []string{"-Command", filter.JSScript}
+	case "dotnet":
+		cmd = "dotnet-script"
+		args = []string{"eval", filter.JSScript}
+	default:
+		return nil, fmt.Errorf("unsupported script type: %s", filter.FilterType)
+	}
+
+	// Serialize the message envelope as JSON input
+	inputBytes, _ := json.Marshal(envelope)
+
+	// Create the command with timeout
+	execCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	proc := exec.CommandContext(execCtx, cmd, args...)
+	proc.Stdin = bytes.NewReader(inputBytes)
+
+	// Capture stdout and stderr
+	var stdout, stderr bytes.Buffer
+	proc.Stdout = &stdout
+	proc.Stderr = &stderr
+
+	// Execute
+	if err := proc.Run(); err != nil {
+		if execCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("%s script timeout (500ms limit)", filter.FilterType)
+		}
+		return nil, fmt.Errorf("%s script error: %v (stderr: %s)", filter.FilterType, err, stderr.String())
+	}
+
+	// Parse output as JSON message envelope
+	output := stdout.Bytes()
+	if len(output) == 0 {
+		// Script produced no output — pass through unchanged
+		return &FilterResult{Action: "pass", Output: envelope}, nil
+	}
+
+	var result MessageEnvelope
+	if err := json.Unmarshal(output, &result); err != nil {
+		// Try to parse as a routing decision (like conditional filters)
+		var decision struct {
+			Action  string `json:"action"`
+			Reason  string `json:"reason"`
+			RouteTo string `json:"route_to"`
+		}
+		if json.Unmarshal(output, &decision) == nil && decision.Action != "" {
+			return &FilterResult{
+				Action:  decision.Action,
+				Reason:  decision.Reason,
+				RouteTO: decision.RouteTo,
+				Output:  envelope,
+			}, nil
+		}
+		return nil, fmt.Errorf("%s script output is not valid JSON: %v", filter.FilterType, err)
+	}
+
+	return &FilterResult{Action: "pass", Output: &result}, nil
 }
