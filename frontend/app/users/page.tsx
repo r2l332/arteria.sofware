@@ -74,6 +74,8 @@ export default function UsersPage() {
   };
 
   const roleColor: Record<string, string> = {
+    super_admin: 'bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20',
+    devops: 'bg-cyan-500/10 text-cyan-400 ring-1 ring-cyan-500/20',
     admin: 'bg-purple-500/10 text-purple-400 ring-1 ring-purple-500/20',
     developer: 'bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20',
     operator: 'bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20',
@@ -110,12 +112,12 @@ export default function UsersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map(u => (
+                  {users.filter(u => u.username).map(u => (
                     <tr key={u.user_id} className="border-b border-arteria-border/50 hover:bg-white/[0.015] transition-colors">
                       <td className="py-3 px-5">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-lg bg-arteria-accent/10 flex items-center justify-center text-xs font-medium text-arteria-accent">
-                            {u.username[0].toUpperCase()}
+                            {(u.username || '?')[0].toUpperCase()}
                           </div>
                           <span className="text-white font-medium">{u.username}</span>
                         </div>

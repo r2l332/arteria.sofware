@@ -1792,14 +1792,32 @@ func createOrganisation(session *gocql.Session) fiber.Handler {
 		}
 
 		orgID := gocql.TimeUUID()
+		now := time.Now()
 		if err := session.Query(
 			`INSERT INTO arteria.organisations (org_id, name, slug, custom_domain, support_email, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			orgID, body.Name, body.Slug, body.CustomDomain, body.SupportEmail, true, time.Now(), time.Now(),
+			orgID, body.Name, body.Slug, body.CustomDomain, body.SupportEmail, true, now, now,
 		).Exec(); err != nil {
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		return c.Status(201).JSON(fiber.Map{"org_id": orgID.String(), "name": body.Name, "slug": body.Slug})
+		// Auto-create org admin user with default password
+		adminUsername := body.Slug + ".admin"
+		defaultPass := "arteria123"
+		hash, _ := auth.HashPassword(defaultPass)
+		adminUserID := gocql.TimeUUID()
+		session.Query(
+			`INSERT INTO arteria.users (user_id, username, password_hash, role, is_active, must_change_password, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			adminUserID, adminUsername, hash, "admin", true, true, orgID, now,
+		).Exec()
+
+		return c.Status(201).JSON(fiber.Map{
+			"org_id":        orgID.String(),
+			"name":          body.Name,
+			"slug":          body.Slug,
+			"admin_user":    adminUsername,
+			"admin_password": defaultPass,
+			"note":          "Admin user created with default password (must change on first login)",
+		})
 	}
 }
 
