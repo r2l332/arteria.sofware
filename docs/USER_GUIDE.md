@@ -474,16 +474,21 @@ The config panel changes dynamically based on the selected type. Cloud connector
 
 ---
 
-## 12. Tunnel Mesh
+## 12. Aorta Mesh
 
 **URL:** `/tunnel`
 
-### Creating a Tunnel Node
+### Creating a Capillary Node
 
-1. Click **+ New Tunnel Node** → enter name and site name
+1. Click **+ New Capillary Node** → enter name and site name
 2. An enrollment token is generated — copy the command shown
-3. Deploy the agent Docker image at the remote site:
+3. Deploy the Capillary agent at the remote site (binary or Docker):
    ```bash
+   # Option A: Standalone binary (recommended)
+   ./capillary enroll <token> --broker arteria.software:9443
+   ./capillary connect --broker arteria.software:9443
+
+   # Option B: Docker
    docker run -d -e BROKER_ADDR=arteria.software:9443 \
      -p 2575:2575 arteria-agent enroll <token>
    docker run -d -e BROKER_ADDR=arteria.software:9443 \
@@ -491,18 +496,10 @@ The config panel changes dynamically based on the selected type. Cloud connector
    ```
 4. The node status changes from PENDING → ENROLLED → CONNECTED
 
-### Linking CPs to Tunnel Nodes
+### Linking CPs to Capillary Nodes
 
-1. Go to **Comm Points** → edit a CP → check **Enable Encrypted Tunnel**
-2. Select the tunnel node from the dropdown
+1. Go to **Comm Points** → edit a CP → check **Route via Capillary**
+2. Select the Capillary node from the dropdown
 3. Set the local port the agent should listen on
 4. Save — config is automatically pushed to the agent
-5. The agent starts listening and all traffic flows encrypted
-
-### Port Management
-
-On the agent host:
-```bash
-./agent-ports.sh add 2579 2580     # Add new ports
-./agent-ports.sh restart           # Recreate container
-```
+5. The agent starts listening and all traffic flows encrypted through the Aorta mesh

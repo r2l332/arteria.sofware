@@ -519,23 +519,23 @@ Change log level at runtime (no restart required).
 
 ---
 
-## Tunnel Mesh
+## Aorta Mesh
 
 ### `GET /api/v1/tunnel/nodes`
 
-List all tunnel nodes.
+List all Capillary nodes.
 
 ### `POST /api/v1/tunnel/nodes`
 
-Create a tunnel node. Returns enrollment token.
+Create a Capillary node. Returns enrollment token.
 
 **Request:** `{"name": "Hospital A", "site_name": "Hospital A"}`
 
-**Response:** `201` `{"node_id": "uuid", "enrollment_token": "uuid", "instructions": "Run: arteria-agent enroll <token>"}`
+**Response:** `201` `{"node_id": "uuid", "enrollment_token": "uuid", "instructions": "Run: capillary enroll <token>"}`
 
 ### `DELETE /api/v1/tunnel/nodes/:id`
 
-Delete a tunnel node.
+Delete a Capillary node.
 
 ### `POST /api/v1/tunnel/nodes/:id/push-config`
 
@@ -620,7 +620,7 @@ View security audit log for a user. **Required role:** `admin` or `security`
 
 ### `GET /api/v1/config/export`
 
-Export all configuration as JSON (CPs, routes, filters, lookups, tunnel nodes).
+Export all configuration as JSON (CPs, routes, filters, lookups, Capillary nodes).
 
 ### `POST /api/v1/config/import`
 

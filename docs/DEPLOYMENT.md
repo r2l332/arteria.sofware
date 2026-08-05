@@ -494,7 +494,7 @@ docker run -d --name capillary \
   -v /opt/arteria-agent:/etc/arteria-agent \
   -e BROKER_ADDR=arteria.software:9443 \
   -p 2575:2575 \
-  arteria-agent enroll <token>
+  capillary enroll <token>
 
 # Connect:
 docker run -d --name capillary \

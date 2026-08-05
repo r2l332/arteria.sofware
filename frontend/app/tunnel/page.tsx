@@ -54,7 +54,7 @@ export default function TunnelPage() {
   };
 
   const deleteNode = async (id: string) => {
-    if (!confirm('Delete this tunnel node?')) return;
+    if (!confirm('Delete this Capillary node?')) return;
     await deleteTunnelNode(id);
     if (selectedNode?.node_id === id) { setSelectedNode(null); setMappings([]); }
     load();
