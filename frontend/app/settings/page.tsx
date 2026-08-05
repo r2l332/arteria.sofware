@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import { PageHeader, StatusBadge, Modal } from '@/components/ui';
 import { Settings, Database, Clock, Archive, FlaskConical, Play, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
+const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : 'http://localhost:8080/api/v1';
 
 function getToken() {
   try { return JSON.parse(localStorage.getItem('arteria_auth') || '{}').token; } catch { return ''; }
