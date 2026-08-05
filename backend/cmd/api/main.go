@@ -283,6 +283,9 @@ func main() {
 	api.Get("/platform/health", auth.RequirePermission(auth.PermPlatformManage), platformHealthCheck(session, nc))
 	api.Get("/platform/tunnel-stats", auth.RequirePermission(auth.PermPlatformManage), getTunnelStats(nc))
 	api.Get("/platform/usage", auth.RequirePermission(auth.PermPlatformManage), getPlatformUsage(session))
+	api.Get("/platform/logs/:service", auth.RequirePermission(auth.PermPlatformManage), getServiceLogs())
+	api.Get("/platform/nats-stats", auth.RequirePermission(auth.PermPlatformManage), getNATSStats(nc))
+	api.Get("/platform/connections", auth.RequirePermission(auth.PermPlatformManage), getConnectionHistory(session))
 
 	// --- Connector Types (reference for CP creation) ---
 	api.Get("/connector-types", func(c *fiber.Ctx) error {
@@ -2153,5 +2156,130 @@ func getPlatformUsage(session *gocql.Session) fiber.Handler {
 			"total_messages": totalMessages,
 			"organisations":  orgUsage,
 		})
+	}
+}
+
+// ==================== Platform Logs & NATS Stats ====================
+
+func getServiceLogs() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		service := c.Params("service")
+		lines := c.QueryInt("lines", 100)
+
+		// Allowed services
+		allowed := map[string]string{
+			"api":        "/var/log/arteria/api.log",
+			"ingestion":  "/var/log/arteria/ingestion.log",
+			"processing": "/var/log/arteria/processing.log",
+			"egress":     "/var/log/arteria/egress.log",
+			"broker":     "/var/log/arteria/broker.log",
+		}
+
+		logFile, ok := allowed[service]
+		if !ok {
+			return c.Status(400).JSON(fiber.Map{"error": "unknown service", "allowed": []string{"api", "ingestion", "processing", "egress", "broker"}})
+		}
+
+		// Read last N lines from log file
+		data, err := os.ReadFile(logFile)
+		if err != nil {
+			return c.JSON(fiber.Map{"service": service, "logs": []string{}, "error": "log file not available"})
+		}
+
+		allLines := strings.Split(string(data), "\n")
+		start := len(allLines) - lines
+		if start < 0 {
+			start = 0
+		}
+		logLines := allLines[start:]
+
+		// Filter empty lines
+		var result []string
+		for _, l := range logLines {
+			if l != "" {
+				result = append(result, l)
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"service":    service,
+			"logs":       result,
+			"total_lines": len(allLines),
+			"showing":    len(result),
+		})
+	}
+}
+
+func getNATSStats(nc *nats.Conn) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Query NATS JetStream account info
+		js, err := nc.JetStream()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "jetstream not available"})
+		}
+
+		info, err := js.AccountInfo()
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// List streams
+		var streams []fiber.Map
+		for stream := range js.StreamNames() {
+			si, err := js.StreamInfo(stream)
+			if err != nil {
+				continue
+			}
+			streams = append(streams, fiber.Map{
+				"name":       si.Config.Name,
+				"subjects":   si.Config.Subjects,
+				"messages":   si.State.Msgs,
+				"bytes":      si.State.Bytes,
+				"consumers":  si.State.Consumers,
+				"first_seq":  si.State.FirstSeq,
+				"last_seq":   si.State.LastSeq,
+				"storage":    si.Config.Storage.String(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"account": fiber.Map{
+				"memory":    info.Memory,
+				"storage":   info.Store,
+				"streams":   info.Streams,
+				"consumers": info.Consumers,
+			},
+			"streams": streams,
+		})
+	}
+}
+
+func getConnectionHistory(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var nodes []fiber.Map
+		iter := session.Query(`SELECT node_id, name, site_name, status, agent_version, last_seen FROM arteria.tunnel_nodes`).Iter()
+		var id gocql.UUID
+		var name, site, status, agentVer string
+		var lastSeen time.Time
+		for iter.Scan(&id, &name, &site, &status, &agentVer, &lastSeen) {
+			uptime := ""
+			if status == "CONNECTED" && !lastSeen.IsZero() {
+				uptime = time.Since(lastSeen).Round(time.Second).String()
+			}
+			nodes = append(nodes, fiber.Map{
+				"node_id":       id.String(),
+				"name":          name,
+				"site_name":     site,
+				"status":        status,
+				"agent_version": agentVer,
+				"last_seen":     lastSeen,
+				"uptime":        uptime,
+			})
+		}
+		iter.Close()
+		if nodes == nil {
+			nodes = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"nodes": nodes, "count": len(nodes)})
 	}
 }
