@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -1988,12 +1989,19 @@ func platformHealthCheck(dbSession *gocql.Session, nc *nats.Conn) fiber.Handler 
 			components["egress"] = fiber.Map{"status": "up", "latency_ms": egressLatency}
 		}
 
-		// Check Aorta Broker
+		// Check Aorta Broker (try NATS metrics, fallback to TCP check)
 		start = time.Now()
 		_, err = nc.Request("arteria.metrics.tunnel-broker", nil, 2*time.Second)
 		brokerLatency := time.Since(start).Milliseconds()
 		if err != nil {
-			components["aorta_broker"] = fiber.Map{"status": "down"}
+			// Broker doesn't have NATS metrics — check TCP connectivity instead
+			conn, tcpErr := net.DialTimeout("tcp", "tunnel-broker:9443", 2*time.Second)
+			if tcpErr == nil {
+				conn.Close()
+				components["aorta_broker"] = fiber.Map{"status": "up", "latency_ms": time.Since(start).Milliseconds(), "details": "TCP reachable"}
+			} else {
+				components["aorta_broker"] = fiber.Map{"status": "down", "details": "unreachable"}
+			}
 		} else {
 			components["aorta_broker"] = fiber.Map{"status": "up", "latency_ms": brokerLatency}
 		}
