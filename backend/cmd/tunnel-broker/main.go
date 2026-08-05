@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -14,6 +16,18 @@ import (
 	"github.com/r2l332/arteria.app/backend/pkg/natsutil"
 	"github.com/r2l332/arteria.app/backend/pkg/scyllautil"
 	"github.com/r2l332/arteria.app/backend/pkg/tunnel"
+)
+
+// Broker metrics
+var (
+	brokerBytesIn      atomic.Int64
+	brokerBytesOut     atomic.Int64
+	brokerMsgsRouted   atomic.Int64
+	brokerConnections  atomic.Int64
+	brokerDisconnects  atomic.Int64
+	brokerActiveConns  atomic.Int64
+	brokerEnrollments  atomic.Int64
+	brokerStartTime    time.Time
 )
 
 func main() {
@@ -51,6 +65,8 @@ func main() {
 	}
 	log.Println("[BROKER] CA initialized")
 
+	brokerStartTime = time.Now()
+
 	// Issue broker's own server cert
 	brokerCert, brokerKey, err := ca.IssueCert("broker", "arteria-broker")
 	if err != nil {
@@ -75,17 +91,23 @@ func main() {
 		OnConnect: func(nodeID string) {
 			log.Printf("[BROKER] node connected: %s", nodeID)
 			updateNodeStatus(session, nodeID, "CONNECTED")
+			brokerConnections.Add(1)
+			brokerActiveConns.Add(1)
 		},
 
 		OnDisconn: func(nodeID string) {
 			log.Printf("[BROKER] node disconnected: %s", nodeID)
 			updateNodeStatus(session, nodeID, "DISCONNECTED")
+			brokerDisconnects.Add(1)
+			brokerActiveConns.Add(-1)
 		},
 
 		// Route inbound traffic through NATS — broker can be anywhere in the world
 		OnInbound: func(nodeID string, targetPort int, data []byte) {
 			subject := "arteria.ingest.raw"
 			log.Printf("[BROKER] routing %d bytes from node %s via NATS subject %s", len(data), nodeID, subject)
+			brokerBytesIn.Add(int64(len(data)))
+			brokerMsgsRouted.Add(1)
 			if _, err := js.Publish(subject, data); err != nil {
 				log.Printf("[BROKER] NATS publish error: %v", err)
 			}
@@ -95,6 +117,24 @@ func main() {
 		log.Fatalf("broker start: %v", err)
 	}
 	_ = broker
+
+	// NATS metrics responder — allows platform health check to query broker stats
+	nc.Subscribe("arteria.metrics.tunnel-broker", func(msg *nats.Msg) {
+		uptime := time.Since(brokerStartTime).Seconds()
+		metrics := map[string]interface{}{
+			"bytes_in":          brokerBytesIn.Load(),
+			"bytes_out":         brokerBytesOut.Load(),
+			"messages_routed":   brokerMsgsRouted.Load(),
+			"total_connections": brokerConnections.Load(),
+			"total_disconnects": brokerDisconnects.Load(),
+			"active_connections": brokerActiveConns.Load(),
+			"enrollments":       brokerEnrollments.Load(),
+			"uptime_seconds":    int64(uptime),
+			"bandwidth_kbps":    float64(brokerBytesIn.Load()+brokerBytesOut.Load()) / uptime * 8 / 1024,
+		}
+		data, _ := json.Marshal(metrics)
+		msg.Respond(data)
+	})
 
 	// Listen for config-push notifications from the API
 	nc.Subscribe("arteria.tunnel.config-push", func(msg *nats.Msg) {

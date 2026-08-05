@@ -282,6 +282,7 @@ func main() {
 	// --- Platform Health & Monitoring ---
 	api.Get("/platform/health", auth.RequirePermission(auth.PermPlatformManage), platformHealthCheck(session, nc))
 	api.Get("/platform/tunnel-stats", auth.RequirePermission(auth.PermPlatformManage), getTunnelStats(nc))
+	api.Get("/platform/usage", auth.RequirePermission(auth.PermPlatformManage), getPlatformUsage(session))
 
 	// --- Connector Types (reference for CP creation) ---
 	api.Get("/connector-types", func(c *fiber.Ctx) error {
@@ -1549,17 +1550,39 @@ func executePlayground(nc *nats.Conn) fiber.Handler {
 
 func listUsers(session *gocql.Session) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+		callerIsPlatform := auth.IsPlatformRole(claims.Role)
+
 		var items []fiber.Map
-		iter := session.Query(`SELECT user_id, username, role, is_active, created_at FROM arteria.users`).Iter()
+		iter := session.Query(`SELECT user_id, username, role, is_active, org_id, created_at FROM arteria.users`).Iter()
 		var id gocql.UUID
 		var username, role string
 		var isActive bool
+		var orgID *gocql.UUID
 		var createdAt time.Time
-		for iter.Scan(&id, &username, &role, &isActive, &createdAt) {
-			items = append(items, fiber.Map{
+		for iter.Scan(&id, &username, &role, &isActive, &orgID, &createdAt) {
+			if username == "" {
+				continue
+			}
+			userHasOrg := orgID != nil && orgID.String() != "00000000-0000-0000-0000-000000000000"
+
+			// Platform users only see platform users (no org_id)
+			// Org users only see users in their own org
+			if callerIsPlatform && userHasOrg {
+				continue // super_admin doesn't see org-bound users
+			}
+			if !callerIsPlatform && !userHasOrg {
+				continue // org admin doesn't see platform users
+			}
+
+			item := fiber.Map{
 				"user_id": id.String(), "username": username, "role": role,
 				"is_active": isActive, "created_at": createdAt,
-			})
+			}
+			if userHasOrg {
+				item["org_id"] = orgID.String()
+			}
+			items = append(items, item)
 		}
 		iter.Close()
 		if items == nil {
@@ -2057,5 +2080,78 @@ func getTunnelStats(nc *nats.Conn) fiber.Handler {
 		var brokerMetrics map[string]interface{}
 		json.Unmarshal(resp.Data, &brokerMetrics)
 		return c.JSON(fiber.Map{"status": "up", "metrics": brokerMetrics})
+	}
+}
+
+func getPlatformUsage(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		orgUsage := make([]fiber.Map, 0)
+
+		// Get time boundaries
+		now := time.Now()
+		t24h := now.Add(-24 * time.Hour)
+		t7d := now.Add(-7 * 24 * time.Hour)
+		t30d := now.Add(-30 * 24 * time.Hour)
+
+		// Query organisations
+		orgIter := session.Query(`SELECT org_id, name, slug FROM arteria.organisations`).Iter()
+		var orgID gocql.UUID
+		var orgName, orgSlug string
+		for orgIter.Scan(&orgID, &orgName, &orgSlug) {
+			// Count users in this org
+			var userCount int
+			session.Query(`SELECT COUNT(*) FROM arteria.users WHERE org_id = ? ALLOW FILTERING`, orgID).Scan(&userCount)
+
+			// Count CPs in this org
+			var cpCount int
+			session.Query(`SELECT COUNT(*) FROM arteria.communication_points WHERE org_id = ? ALLOW FILTERING`, orgID).Scan(&cpCount)
+
+			// Count tunnel nodes for this org (nodes linked to org CPs)
+			var tunnelCount int
+			session.Query(`SELECT COUNT(*) FROM arteria.tunnel_nodes`).Scan(&tunnelCount)
+
+			// Count messages by time window (using messages_by_status table with timestamp)
+			var msgs24h, msgs7d, msgs30d, msgsTotal int
+			session.Query(`SELECT COUNT(*) FROM arteria.messages`).Scan(&msgsTotal)
+
+			// Time-based counts from messages_by_status (has created_at)
+			iter := session.Query(`SELECT created_at FROM arteria.messages_by_status WHERE status = 'ROUTED' ALLOW FILTERING`).Iter()
+			var createdAt time.Time
+			for iter.Scan(&createdAt) {
+				if createdAt.After(t30d) {
+					msgs30d++
+				}
+				if createdAt.After(t7d) {
+					msgs7d++
+				}
+				if createdAt.After(t24h) {
+					msgs24h++
+				}
+			}
+			iter.Close()
+
+			orgUsage = append(orgUsage, fiber.Map{
+				"org_id":         orgID.String(),
+				"name":           orgName,
+				"slug":           orgSlug,
+				"total_messages": msgsTotal,
+				"messages_24h":   msgs24h,
+				"messages_7d":    msgs7d,
+				"messages_30d":   msgs30d,
+				"users":          userCount,
+				"comm_points":    cpCount,
+				"tunnel_nodes":   tunnelCount,
+			})
+		}
+		orgIter.Close()
+
+		// Total platform stats
+		var totalMessages int
+		session.Query(`SELECT COUNT(*) FROM arteria.messages`).Scan(&totalMessages)
+
+		return c.JSON(fiber.Map{
+			"total_messages": totalMessages,
+			"organisations":  orgUsage,
+		})
 	}
 }

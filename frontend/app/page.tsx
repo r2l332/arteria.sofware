@@ -15,6 +15,24 @@ interface PlatformHealth {
   users?: { total: number; online: number };
 }
 
+interface OrgUsage {
+  org_id: string;
+  name: string;
+  slug: string;
+  total_messages: number;
+  users: number;
+  comm_points: number;
+  messages_24h?: number;
+  messages_7d?: number;
+  messages_30d?: number;
+  tunnel_nodes?: number;
+}
+
+interface PlatformUsage {
+  total_messages: number;
+  organisations: OrgUsage[];
+}
+
 export default function DashboardPage() {
   const { role } = useAuth();
   const isPlatform = role === 'super_admin' || role === 'devops';
@@ -23,18 +41,17 @@ export default function DashboardPage() {
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [recentErrors, setRecentErrors] = useState<ErrorMessage[]>([]);
   const [health, setHealth] = useState<PlatformHealth | null>(null);
+  const [usage, setUsage] = useState<PlatformUsage | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      // Stats and metrics are available to all roles
       getStats().then(setStats).catch(() => {});
       getMetrics().then(setMetrics).catch(() => {});
 
       if (isPlatform) {
-        // Platform roles get health check, NOT messages
         apiFetch<PlatformHealth>('/platform/health').then(setHealth).catch(() => {});
+        apiFetch<PlatformUsage>('/platform/usage').then(setUsage).catch(() => {});
       } else {
-        // Org roles get messages and errors
         getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
         getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
       }
@@ -90,6 +107,52 @@ export default function DashboardPage() {
                     {comp.details && <p className="text-2xs text-arteria-muted">{comp.details}</p>}
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Per-Org Usage (billing metrics) */}
+          {isPlatform && usage && usage.organisations.length > 0 && (
+            <div className="card">
+              <div className="card-header flex items-center gap-2">
+                <Building2 size={16} className="text-arteria-muted" />
+                <span className="text-sm font-medium text-white">Organisation Usage</span>
+                <span className="ml-auto text-2xs text-arteria-muted">{usage.total_messages.toLocaleString()} total messages</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-arteria-border">
+                      <th className="text-left py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Organisation</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">24h</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">7 days</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">30 days</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">All Time</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Users</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">CPs</th>
+                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Capillaries</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usage.organisations.map(org => (
+                      <tr key={org.org_id} className="border-b border-arteria-border/50 hover:bg-white/[0.015]">
+                        <td className="py-3 px-5">
+                          <div>
+                            <span className="text-white font-medium">{org.name}</span>
+                            <span className="text-2xs text-arteria-muted ml-2 font-mono">{org.slug}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_24h ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_7d ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_30d ?? 0).toLocaleString()}</td>
+                        <td className="py-3 px-5 text-right text-arteria-accent font-mono text-xs font-medium">{org.total_messages.toLocaleString()}</td>
+                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.users}</td>
+                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.comm_points}</td>
+                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.tunnel_nodes ?? 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
