@@ -3,41 +3,96 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, StatusBadge, PageHeader, EmptyState } from '@/components/ui';
-import { getStats, getMessages, getErrors, getMetrics, type Stats, type Message, type ErrorMessage, type LiveMetrics } from '@/lib/api';
-import { MessageSquare, GitBranch, AlertTriangle, Activity, ArrowUpRight, ArrowDownRight, Zap, Database } from 'lucide-react';
+import { getStats, getMessages, getErrors, getMetrics, apiFetch, type Stats, type Message, type ErrorMessage, type LiveMetrics } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { MessageSquare, GitBranch, AlertTriangle, Activity, ArrowUpRight, ArrowDownRight, Zap, Database, Server, Shield, Building2 } from 'lucide-react';
+
+interface PlatformHealth {
+  status: string;
+  components: Record<string, { status: string; latency_ms?: number; details?: string }>;
+  tunnel_nodes?: { total: number; connected: number };
+  orgs?: { total: number };
+  users?: { total: number; online: number };
+}
 
 export default function DashboardPage() {
+  const { role } = useAuth();
+  const isPlatform = role === 'super_admin' || role === 'devops';
   const [stats, setStats] = useState<Stats | null>(null);
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [recentErrors, setRecentErrors] = useState<ErrorMessage[]>([]);
+  const [health, setHealth] = useState<PlatformHealth | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      // Load each independently — some may 403 for restricted roles
+      // Stats and metrics are available to all roles
       getStats().then(setStats).catch(() => {});
-      getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
-      getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
       getMetrics().then(setMetrics).catch(() => {});
+
+      if (isPlatform) {
+        // Platform roles get health check, NOT messages
+        apiFetch<PlatformHealth>('/platform/health').then(setHealth).catch(() => {});
+      } else {
+        // Org roles get messages and errors
+        getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
+        getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
+      }
     };
     load();
-    const interval = setInterval(load, 3000);
+    const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [isPlatform]);
 
   return (
     <div className="flex h-screen bg-arteria-bg">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
-        <PageHeader title="Dashboard" description="Real-time system overview" />
+        <PageHeader title={isPlatform ? "Platform Overview" : "Dashboard"} description={isPlatform ? "System health and organisation metrics" : "Real-time system overview"} />
 
         <div className="p-8 space-y-6">
           {/* Stats Cards */}
-          <div className="grid grid-cols-3 gap-4">
-            <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All time" />
-            <StatCard label="Active Routes" value={stats?.total_routes ?? '—'} icon={GitBranch} subtitle="Configured" />
-            <StatCard label="Errors" value={stats?.total_errors ?? '—'} icon={AlertTriangle} subtitle="Total failures" />
-          </div>
+          {isPlatform ? (
+            <div className="grid grid-cols-4 gap-4">
+              <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All orgs" />
+              <StatCard label="Organisations" value={health?.orgs?.total ?? '—'} icon={Building2} subtitle="Active" />
+              <StatCard label="Users" value={health?.users?.total ?? '—'} icon={Activity} subtitle={`${health?.users?.online ?? 0} online`} />
+              <StatCard label="Capillary Nodes" value={health?.tunnel_nodes?.total ?? '—'} icon={Shield} subtitle={`${health?.tunnel_nodes?.connected ?? 0} connected`} />
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-4">
+              <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All time" />
+              <StatCard label="Active Routes" value={stats?.total_routes ?? '—'} icon={GitBranch} subtitle="Configured" />
+              <StatCard label="Errors" value={stats?.total_errors ?? '—'} icon={AlertTriangle} subtitle="Total failures" />
+            </div>
+          )}
+
+          {/* Platform Health (super_admin only) */}
+          {isPlatform && health && (
+            <div className="card">
+              <div className="card-header flex items-center gap-2">
+                <Server size={16} className="text-arteria-muted" />
+                <span className="text-sm font-medium text-white">Platform Health</span>
+                <span className={`ml-auto badge ${health.status === 'healthy' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                  {health.status}
+                </span>
+              </div>
+              <div className="p-5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {Object.entries(health.components || {}).map(([name, comp]) => (
+                  <div key={name} className="bg-arteria-bg rounded-lg p-3 border border-arteria-border">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={`w-2 h-2 rounded-full ${comp.status === 'up' ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="text-xs font-medium text-white capitalize">{name}</span>
+                    </div>
+                    {comp.latency_ms !== undefined && (
+                      <p className="text-2xs text-arteria-muted">{comp.latency_ms}ms latency</p>
+                    )}
+                    {comp.details && <p className="text-2xs text-arteria-muted">{comp.details}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Live Throughput */}
           {metrics && (

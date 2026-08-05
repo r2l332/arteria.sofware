@@ -195,7 +195,7 @@ export default function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-2xs font-medium text-white truncate">{username}</p>
-            <p className="text-2xs text-arteria-muted">{role}</p>
+            <p className="text-2xs text-arteria-muted">{isPlatformRole ? '⚡ Platform' : role}</p>
           </div>
           <Link href="/account" className="p-1 text-arteria-muted hover:text-arteria-accent transition-colors" title="Change password">
             <Key size={12} />

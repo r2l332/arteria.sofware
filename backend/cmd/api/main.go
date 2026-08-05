@@ -24,6 +24,8 @@ import (
 	"github.com/r2l332/arteria.app/backend/pkg/security"
 )
 
+var sessionTracker *auth.SessionTracker
+
 func main() {
 	log, err := logging.FromEnv("api")
 	if err != nil {
@@ -88,7 +90,7 @@ func main() {
 	_ = auditLog // Used in login handler and audit middleware
 
 	// Session tracker (5-minute idle timeout = considered offline)
-	sessionTracker := auth.NewSessionTracker(5 * time.Minute)
+	sessionTracker = auth.NewSessionTracker(5 * time.Minute)
 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -275,6 +277,10 @@ func main() {
 	api.Post("/organisations", auth.RequirePermission(auth.PermOrgManage), createOrganisation(session))
 	api.Get("/organisations/:id", auth.RequirePermission(auth.PermOrgView), getOrganisation(session))
 	api.Put("/organisations/:id/branding", auth.RequirePermission(auth.PermOrgManage), updateOrganisationBranding(session))
+
+	// --- Platform Health & Monitoring ---
+	api.Get("/platform/health", auth.RequirePermission(auth.PermPlatformManage), platformHealthCheck(session, nc))
+	api.Get("/platform/tunnel-stats", auth.RequirePermission(auth.PermPlatformManage), getTunnelStats(nc))
 
 	// --- Connector Types (reference for CP creation) ---
 	api.Get("/connector-types", func(c *fiber.Ctx) error {
@@ -1898,5 +1904,126 @@ func updateOrganisationBranding(session *gocql.Session) fiber.Handler {
 		}
 
 		return c.JSON(fiber.Map{"status": "updated"})
+	}
+}
+
+// ==================== Platform Health & Monitoring ====================
+
+func platformHealthCheck(dbSession *gocql.Session, nc *nats.Conn) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		components := make(fiber.Map)
+
+		// Check ScyllaDB
+		start := time.Now()
+		var count int
+		err := dbSession.Query(`SELECT COUNT(*) FROM arteria.users`).Scan(&count)
+		dbLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["scylladb"] = fiber.Map{"status": "down", "error": err.Error()}
+		} else {
+			components["scylladb"] = fiber.Map{"status": "up", "latency_ms": dbLatency, "details": fmt.Sprintf("%d users", count)}
+		}
+
+		// Check NATS
+		start = time.Now()
+		_, err = nc.Request("arteria.metrics.ingestion", nil, 2*time.Second)
+		natsLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["nats"] = fiber.Map{"status": "down"}
+		} else {
+			components["nats"] = fiber.Map{"status": "up", "latency_ms": natsLatency}
+		}
+
+		// Check Ingestion
+		start = time.Now()
+		_, err = nc.Request("arteria.metrics.ingestion", nil, 2*time.Second)
+		ingLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["ingestion"] = fiber.Map{"status": "down"}
+		} else {
+			components["ingestion"] = fiber.Map{"status": "up", "latency_ms": ingLatency}
+		}
+
+		// Check Processing
+		start = time.Now()
+		_, err = nc.Request("arteria.metrics.processing", nil, 2*time.Second)
+		procLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["processing"] = fiber.Map{"status": "down"}
+		} else {
+			components["processing"] = fiber.Map{"status": "up", "latency_ms": procLatency}
+		}
+
+		// Check Egress
+		start = time.Now()
+		_, err = nc.Request("arteria.metrics.egress", nil, 2*time.Second)
+		egressLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["egress"] = fiber.Map{"status": "down"}
+		} else {
+			components["egress"] = fiber.Map{"status": "up", "latency_ms": egressLatency}
+		}
+
+		// Check Aorta Broker
+		start = time.Now()
+		_, err = nc.Request("arteria.metrics.tunnel-broker", nil, 2*time.Second)
+		brokerLatency := time.Since(start).Milliseconds()
+		if err != nil {
+			components["aorta_broker"] = fiber.Map{"status": "down"}
+		} else {
+			components["aorta_broker"] = fiber.Map{"status": "up", "latency_ms": brokerLatency}
+		}
+
+		// Count tunnel nodes
+		var totalNodes, connectedNodes int
+		nodeIter := dbSession.Query(`SELECT status FROM arteria.tunnel_nodes`).Iter()
+		var nodeStatus string
+		for nodeIter.Scan(&nodeStatus) {
+			totalNodes++
+			if nodeStatus == "CONNECTED" || nodeStatus == "connected" {
+				connectedNodes++
+			}
+		}
+		nodeIter.Close()
+
+		// Count orgs
+		var orgCount int
+		dbSession.Query(`SELECT COUNT(*) FROM arteria.organisations`).Scan(&orgCount)
+
+		// Count users
+		var userCount int
+		dbSession.Query(`SELECT COUNT(*) FROM arteria.users`).Scan(&userCount)
+
+		// Overall status
+		overallStatus := "healthy"
+		for _, comp := range components {
+			if m, ok := comp.(fiber.Map); ok {
+				if m["status"] == "down" {
+					overallStatus = "degraded"
+					break
+				}
+			}
+		}
+
+		return c.JSON(fiber.Map{
+			"status":       overallStatus,
+			"components":   components,
+			"tunnel_nodes": fiber.Map{"total": totalNodes, "connected": connectedNodes},
+			"orgs":         fiber.Map{"total": orgCount},
+			"users":        fiber.Map{"total": userCount, "online": sessionTracker.Count()},
+			"timestamp":    time.Now(),
+		})
+	}
+}
+
+func getTunnelStats(nc *nats.Conn) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		resp, err := nc.Request("arteria.metrics.tunnel-broker", nil, 2*time.Second)
+		if err != nil {
+			return c.JSON(fiber.Map{"error": "broker unreachable", "status": "down"})
+		}
+		var brokerMetrics map[string]interface{}
+		json.Unmarshal(resp.Data, &brokerMetrics)
+		return c.JSON(fiber.Map{"status": "up", "metrics": brokerMetrics})
 	}
 }
