@@ -741,3 +741,460 @@ Clustering is for resilience, not throughput.
 - NATS single node already does 1.2M msgs/sec — you won't hit this limit
 - Event Hubs adds latency (50ms vs 0.5ms) — worse for real-time HL7
 - **Recommendation: Don't do this. NATS is better for this workload.**
+
+---
+---
+
+## Delivery Models: SaaS vs Ship-to-Customer
+
+Two distinct revenue models, each with different architecture, security, and operational requirements.
+
+---
+
+### Model 1: Ship & Deploy (Single-Tenant per Customer)
+
+Each customer gets their own isolated Arteria instance — either self-hosted or managed by us.
+
+#### Option A: Customer Self-Deploy
+
+Package Arteria as a turnkey appliance. Customer runs it in their own cloud/on-prem.
+
+**Delivery artifact:**
+```
+arteria-v1.0.0/
+├── docker-compose.yml          # Single command to start
+├── .env.example                # All configurable knobs
+├── infra/
+│   ├── cql/                    # Schema auto-applied
+│   └── caddy/                  # TLS config
+├── scripts/
+│   ├── install.sh              # curl | bash one-liner
+│   └── upgrade.sh              # Rolling upgrade
+├── dist/
+│   └── capillary-*             # Pre-built agent binaries
+└── LICENSE
+```
+
+**install.sh (one-liner deploy):**
+```bash
+#!/bin/bash
+# curl -sSL https://get.arteria.software | bash
+set -e
+DOMAIN="${1:?Usage: install.sh <domain> [email]}"
+EMAIL="${2:-admin@$DOMAIN}"
+
+git clone --depth 1 https://github.com/r2l332/arteria.sofware.git /opt/arteria
+cd /opt/arteria
+
+cat > .env <<EOF
+DOMAIN=$DOMAIN
+TLS_EMAIL=$EMAIL
+ADMIN_PASS=$(openssl rand -base64 12)
+JWT_SECRET=$(openssl rand -hex 32)
+EOF
+
+docker compose up -d
+
+echo "Arteria deployed at https://$DOMAIN"
+echo "Login: admin / $(grep ADMIN_PASS .env | cut -d= -f2)"
+echo "You will be prompted to change your password on first login."
+```
+
+**Customer requirements:**
+- Docker Engine + Docker Compose
+- 4 vCPU, 16GB RAM minimum
+- Ports 80, 443, 2575, 9443
+- DNS record pointing to their server
+
+**Upgrade path:**
+```bash
+cd /opt/arteria
+git pull origin main
+docker compose up -d --build
+# Schema migrations auto-apply via scylla-init container
+# NATS streams persist across restarts
+# Zero downtime (rolling restart)
+```
+
+**Pros:** Customer owns data, no compliance questions, works air-gapped
+**Cons:** Support overhead, version fragmentation, no visibility into issues
+
+#### Option B: Managed Deployment (We Deploy in Their Cloud)
+
+We provision and manage the infrastructure in the customer's Azure/AWS subscription.
+
+**Deployment automation (Terraform/Bicep):**
+```
+Per customer:
+  1x AKS cluster (3 nodes) — or single VM for smaller
+  1x Cosmos DB account (Cassandra API)
+  1x Azure Front Door (custom domain + TLS)
+  1x Key Vault (customer-specific secrets)
+  1x Log Analytics workspace
+  GitOps: ArgoCD or Flux syncs from a customer-specific branch
+```
+
+**Access model:**
+- We get Contributor access to a dedicated resource group
+- Customer's IT team gets Reader access + alert notifications
+- Break-glass: our SRE team can SSH only via Azure Bastion (audited)
+
+**Pros:** Full control, customer data stays in their subscription, premium pricing
+**Cons:** Operational overhead per customer, doesn't scale to 100 customers
+
+---
+
+### Model 2: Multi-Tenant SaaS Platform
+
+Single Arteria platform serving multiple customers, with strict tenant isolation.
+
+#### Tenant Isolation Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                        Arteria SaaS Platform                                    │
+│                                                                                 │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │  Azure Front Door                                                        │  │
+│  │  *.arteria.cloud                                                         │  │
+│  │  hospital-a.arteria.cloud → tenant: hospital-a                           │  │
+│  │  labcorp.arteria.cloud    → tenant: labcorp                              │  │
+│  │  custom.hospital-b.com    → tenant: hospital-b (CNAME)                   │  │
+│  └──────────────────────────────┬───────────────────────────────────────────┘  │
+│                                 │                                              │
+│  ┌──────────────────────────────▼───────────────────────────────────────────┐  │
+│  │  API Gateway / Tenant Router                                              │  │
+│  │  - Extract tenant from subdomain or JWT claim                             │  │
+│  │  - Inject X-Tenant-ID header into all downstream requests                │  │
+│  │  - Rate limit per tenant                                                  │  │
+│  │  - WAF rules per tenant tier                                              │  │
+│  └──────────────────────────────┬───────────────────────────────────────────┘  │
+│                                 │                                              │
+│  ┌──────────────────────────────▼───────────────────────────────────────────┐  │
+│  │  Shared Compute (AKS)                                                     │  │
+│  │                                                                           │  │
+│  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────┐ ┌─────────────────┐  │  │
+│  │  │  Ingestion  │ │  Processing  │ │  API        │ │  Frontend       │  │  │
+│  │  │  (shared)   │ │  (shared)    │ │  (shared)   │ │  (shared)       │  │  │
+│  │  │  tenant-    │ │  tenant-     │ │  tenant-    │ │  tenant-aware   │  │  │
+│  │  │  aware      │ │  aware       │ │  scoped     │ │  theming        │  │  │
+│  │  └──────┬──────┘ └──────┬───────┘ └──────┬──────┘ └─────────────────┘  │  │
+│  │         │                │                │                              │  │
+│  └─────────┼────────────────┼────────────────┼──────────────────────────────┘  │
+│            │                │                │                                  │
+│  ┌─────────▼────────────────▼────────────────▼──────────────────────────────┐  │
+│  │  NATS JetStream (shared cluster, tenant-prefixed subjects)               │  │
+│  │  Streams: {tenant}.ingest.>, {tenant}.route.>, {tenant}.dlq.>           │  │
+│  │  Each tenant's messages are isolated by subject prefix                    │  │
+│  └──────────────────────────────┬───────────────────────────────────────────┘  │
+│                                 │                                              │
+│  DATA ISOLATION (per tenant):                                                  │
+│  ┌──────────────────────────────▼───────────────────────────────────────────┐  │
+│  │  Option A: Shared Cosmos DB, separate keyspace per tenant                │  │
+│  │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐           │  │
+│  │  │ arteria_hosp_a  │ │ arteria_labcorp │ │ arteria_hosp_b  │           │  │
+│  │  │  messages       │ │  messages       │ │  messages       │           │  │
+│  │  │  routes         │ │  routes         │ │  routes         │           │  │
+│  │  │  users          │ │  users          │ │  users          │           │  │
+│  │  └─────────────────┘ └─────────────────┘ └─────────────────┘           │  │
+│  │                                                                         │  │
+│  │  Option B: Separate Cosmos DB account per tenant (premium tier)          │  │
+│  │  - Complete physical isolation                                          │  │
+│  │  - Independent scaling per customer                                     │  │
+│  │  - Customer can have their own encryption key (CMK)                     │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  Per-Tenant Resources:                                                   │  │
+│  │  - Aorta broker: shared (tenant ID in cert CN for routing)              │  │
+│  │  - Capillary certs: signed with tenant-specific intermediate CA          │  │
+│  │  - Encryption keys: per-tenant Key Vault keys (envelope encryption)     │  │
+│  │  - Audit log: per-tenant, immutable, 7-year retention                   │  │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Security: Data Isolation Layers
+
+This is the critical part. Healthcare data must **never** cross tenant boundaries.
+
+**Layer 1: Network Isolation**
+```
+┌─────────────────────────────────────────┐
+│ Every request carries tenant context:    │
+│                                          │
+│ 1. Subdomain → tenant mapping            │
+│ 2. JWT token contains tenant_id claim    │
+│ 3. API middleware validates tenant_id    │
+│    matches the subdomain                 │
+│ 4. All DB queries scoped by keyspace     │
+│ 5. All NATS subjects prefixed by tenant  │
+│ 6. Logs tagged with tenant_id            │
+│                                          │
+│ Cross-tenant request = IMPOSSIBLE        │
+│ (different keyspace, different subjects) │
+└─────────────────────────────────────────┘
+```
+
+**Layer 2: Data Isolation (Cosmos DB)**
+
+| Tier | Isolation | How | Security Level |
+|---|---|---|---|
+| Standard | Keyspace per tenant | `arteria_{tenant_id}.*` | Logical (shared account) |
+| Premium | Cosmos account per tenant | Separate connection string | Physical (separate account) |
+| Sovereign | Cosmos in customer's subscription | Cross-subscription link | Customer-controlled |
+
+**Standard tier implementation:**
+```go
+// Tenant context flows through every request
+type TenantContext struct {
+    TenantID    string
+    Keyspace    string // "arteria_" + tenantID
+    NATSPrefix  string // tenantID + "."
+}
+
+// Middleware extracts tenant from JWT
+func TenantMiddleware() fiber.Handler {
+    return func(c *fiber.Ctx) error {
+        claims := c.Locals("claims").(*auth.Claims)
+        tenant := &TenantContext{
+            TenantID:   claims.TenantID,
+            Keyspace:   "arteria_" + claims.TenantID,
+            NATSPrefix: claims.TenantID + ".",
+        }
+        c.Locals("tenant", tenant)
+        return c.Next()
+    }
+}
+
+// Every DB query uses tenant keyspace
+func (s *Store) GetMessages(tenant *TenantContext, limit int) ([]Message, error) {
+    query := fmt.Sprintf("SELECT * FROM %s.messages LIMIT ?", tenant.Keyspace)
+    // SQL injection safe: keyspace is derived from JWT, not user input
+    // Keyspace name is alphanumeric + underscore only (validated at provisioning)
+    return s.session.Query(query, limit).Iter()...
+}
+
+// Every NATS publish uses tenant prefix
+func (p *Publisher) Publish(tenant *TenantContext, subject string, data []byte) error {
+    return p.js.Publish(tenant.NATSPrefix + subject, data)
+}
+```
+
+**Layer 3: Encryption**
+
+| Data | At Rest | In Transit | Key Management |
+|---|---|---|---|
+| Messages (PHI) | AES-256 (Cosmos SSE) | TLS 1.3 | Per-tenant CMK in Key Vault |
+| Config (routes, filters) | AES-256 | TLS 1.3 | Shared platform key |
+| Tunnel traffic | N/A | mTLS (ECDSA P-256) | Per-tenant intermediate CA |
+| Backups | AES-256 (Blob SSE) | TLS 1.3 | Per-tenant CMK |
+| Audit logs | AES-256 (immutable) | TLS 1.3 | Platform key (tamper-proof) |
+
+**Premium tier: per-tenant encryption keys:**
+```
+Platform Key Vault
+├── tenant-hosp-a/
+│   ├── data-encryption-key     (encrypts PHI at rest)
+│   ├── jwt-signing-key         (signs auth tokens)
+│   └── tunnel-ca-key           (signs Capillary certs)
+├── tenant-labcorp/
+│   ├── data-encryption-key
+│   ├── jwt-signing-key
+│   └── tunnel-ca-key
+```
+
+**Layer 4: Access Control**
+
+```
+Platform roles (our team):
+  platform-admin     → Can provision/deprovision tenants, view platform metrics
+  platform-sre       → Can access tenant infra for support (audit-logged)
+  platform-support   → Can view tenant config (NOT messages), respond to tickets
+
+Tenant roles (customer's team):
+  tenant-admin       → Full control within their tenant
+  tenant-developer   → Routes, filters, CPs, playground
+  tenant-operator    → View only, CP logs, metrics
+  tenant-security    → Audit logs, user management, config
+  tenant-viewer      → Read-only dashboard
+
+CRITICAL: Platform roles CANNOT read tenant PHI.
+Tenant roles CANNOT see other tenants.
+Every PHI access is logged in an immutable audit trail.
+```
+
+**Layer 5: Audit & Compliance**
+
+```
+Per-tenant audit log (immutable, append-only):
+- Every login (success + failure)
+- Every PHI access (who viewed which message)
+- Every config change (routes, filters, CPs)
+- Every user management action
+- Every Capillary enrollment/connection
+- Retention: 7 years (HIPAA requirement)
+- Storage: Azure Blob (immutable + WORM policy)
+- Format: JSON Lines, exportable for compliance audits
+```
+
+#### White-Label / Custom Branding
+
+Customers see their own brand, not Arteria.
+
+**Implementation:**
+
+```
+Tenant config (stored in Cosmos):
+{
+  "tenant_id": "hospital-a",
+  "branding": {
+    "app_name": "HealthConnect",
+    "logo_url": "https://hospital-a.arteria.cloud/assets/logo.svg",
+    "primary_color": "#1a5276",
+    "accent_color": "#2ecc71",
+    "favicon_url": "https://hospital-a.arteria.cloud/assets/favicon.ico",
+    "support_email": "support@hospital-a.com",
+    "custom_domain": "integration.hospital-a.com"
+  }
+}
+```
+
+**Frontend changes needed:**
+```typescript
+// Layout fetches branding from /api/v1/tenant/branding (public endpoint)
+// Returns colors, logo, app name based on subdomain
+
+// Sidebar brand area:
+<div className="px-5 py-5">
+  <img src={branding.logo_url} alt={branding.app_name} />
+  <h1>{branding.app_name}</h1>
+</div>
+
+// CSS variables set from branding config:
+:root {
+  --arteria-accent: ${branding.primary_color};
+  --arteria-surface: ${branding.surface_color};
+}
+```
+
+**Custom domains:**
+```
+Customer:  integration.hospital-a.com  →  CNAME to hospital-a.arteria.cloud
+Front Door: Routes based on hostname → injects tenant_id
+TLS: Front Door auto-provisions cert for custom domain
+```
+
+#### Multi-Tenant SaaS Cost Model
+
+**Platform infrastructure (fixed cost, shared):**
+- AKS cluster (5 nodes): ~$500/month
+- NATS cluster (3 pods): included in AKS
+- Front Door: ~$50/month
+- Key Vault: ~$10/month
+- Monitoring: ~$50/month
+- **Platform base: ~$610/month**
+
+**Per-tenant marginal cost:**
+| Tier | Cosmos | Storage | Capillaries | Marginal Cost |
+|---|---|---|---|---|
+| Starter (1M msgs/day) | Serverless ~$30 | ~$5 | 2 | ~$35/month |
+| Professional (10M msgs/day) | Autoscale ~$150 | ~$20 | 10 | ~$170/month |
+| Enterprise (50M msgs/day) | Dedicated ~$500 | ~$50 | Unlimited | ~$550/month |
+
+**Break-even math:**
+- 10 Starter tenants: $610 + (10 × $35) = $960/month infra, charge $500/tenant = $5,000 revenue
+- 5 Professional tenants: $610 + (5 × $170) = $1,460/month infra, charge $1,500/tenant = $7,500 revenue
+- Mix of 20 tenants: ~$2,500/month infra → charge $15,000-30,000/month
+
+**Margin: 80-90% at scale.** The platform cost is fixed; each tenant adds marginal cost only.
+
+---
+
+### Security Comparison: Single-Tenant vs Multi-Tenant
+
+| Security Aspect | Single-Tenant (Ship) | Multi-Tenant SaaS |
+|---|---|---|
+| Data isolation | Physical (separate infra) | Logical (keyspace) or Physical (account) |
+| Encryption keys | Customer manages | Per-tenant CMK in Key Vault |
+| Network isolation | Customer's VNet | Shared VNet, tenant-scoped at app layer |
+| Compliance scope | Customer's responsibility | Platform responsibility (harder) |
+| Audit logs | Customer owns | Platform manages, customer can export |
+| Breach blast radius | 1 customer | Potentially all (if isolation fails) |
+| Pen testing | Customer runs their own | You must run continuously |
+| SOC 2 / HITRUST | Not needed (customer's infra) | Required (you hold the data) |
+
+**Multi-tenant security requirements (non-negotiable):**
+1. Annual penetration test by third party
+2. SOC 2 Type II certification
+3. HITRUST CSF certification (for healthcare)
+4. Bug bounty program
+5. Tenant isolation tests in CI (verify cross-tenant queries fail)
+6. Encryption key rotation every 90 days
+7. Immutable audit logs (cannot be deleted by anyone, including platform admins)
+8. RBAC: platform team can NEVER read PHI without customer-approved break-glass
+9. Data residency: customer chooses Azure region, data never leaves
+10. Right to deletion: full tenant data wipe within 30 days of offboarding
+
+---
+
+### Tenant Isolation CI Tests (add to pipeline)
+
+These tests should run on every deploy to verify tenant isolation:
+
+```go
+func TestCrossTenantIsolation(t *testing.T) {
+    // Create two tenants
+    tenantA := provisionTenant("test-tenant-a")
+    tenantB := provisionTenant("test-tenant-b")
+
+    // Insert message as tenant A
+    tokenA := login(tenantA, "admin", "pass")
+    msgID := createMessage(tokenA, "ADT^A01", "PAT001")
+
+    // Try to read tenant A's message as tenant B
+    tokenB := login(tenantB, "admin", "pass")
+    resp := getMessage(tokenB, msgID)
+    assert(resp.StatusCode == 404, "Tenant B should NOT see Tenant A's message")
+
+    // Try to list tenant A's routes as tenant B
+    routes := listRoutes(tokenB)
+    assert(len(routes) == 0, "Tenant B should NOT see Tenant A's routes")
+
+    // Try to connect Capillary with tenant A's cert to tenant B's broker
+    err := connectCapillary(tenantA.Cert, tenantB.BrokerAddr)
+    assert(err != nil, "Capillary cert from tenant A should be rejected by tenant B")
+}
+```
+
+---
+
+### Recommended Go-to-Market Strategy
+
+```
+Phase 1: Ship & Deploy (NOW)
+├── Sell to 5-10 design partners
+├── docker-compose.yml + install.sh
+├── Manual onboarding, learn what customers need
+├── Revenue: $500-2000/month per customer
+└── Total: $5K-20K MRR
+
+Phase 2: Managed Deploy (6 months)
+├── We deploy in customer's Azure subscription
+├── Terraform/Bicep automation
+├── 24/7 monitoring, SLA
+├── Revenue: $2000-5000/month per customer
+└── Total: $20K-50K MRR
+
+Phase 3: Multi-Tenant SaaS (12 months)
+├── arteria.cloud platform
+├── Self-service onboarding
+├── White-label portal
+├── SOC 2 + HITRUST certification
+├── Revenue: $500-5000/month per customer, 100+ customers
+└── Total: $100K+ MRR
+
+The ship-and-deploy model funds the SaaS development.
+Don't build multi-tenant until you have 10+ paying customers
+proving the product-market fit.
+```
