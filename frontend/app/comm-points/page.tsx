@@ -149,6 +149,9 @@ export default function CommPointsPage() {
                           <optgroup label="HTTP">
                             <option value="WEBHOOK">Webhook (HTTP POST)</option>
                           </optgroup>
+                          <optgroup label="Testing">
+                            <option value="DISCARD">Discard (Null Sink)</option>
+                          </optgroup>
                         </select>
                       </div>
                     </div>
