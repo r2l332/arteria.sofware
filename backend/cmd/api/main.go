@@ -1725,6 +1725,30 @@ func sendMessage(session *gocql.Session) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "to and subject required"})
 		}
 
+		// Validate recipient exists and is in same org (or both are platform users)
+		var recipientOrgID *gocql.UUID
+		var recipientRole string
+		err := session.Query(`SELECT org_id, role FROM arteria.users WHERE username = ? ALLOW FILTERING`, body.To).Scan(&recipientOrgID, &recipientRole)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "recipient user not found"})
+		}
+
+		// Get sender's org
+		var senderOrgID *gocql.UUID
+		session.Query(`SELECT org_id FROM arteria.users WHERE username = ? ALLOW FILTERING`, claims.Username).Scan(&senderOrgID)
+
+		senderIsPlatform := auth.IsPlatformRole(claims.Role)
+		recipientIsPlatform := auth.IsPlatformRole(recipientRole)
+
+		// Rules: platform users can message other platform users
+		// Org users can only message users in the same org
+		if !senderIsPlatform && !recipientIsPlatform {
+			// Both are org users — must be same org
+			if senderOrgID == nil || recipientOrgID == nil || senderOrgID.String() != recipientOrgID.String() {
+				return c.Status(403).JSON(fiber.Map{"error": "can only message users in your organisation"})
+			}
+		}
+
 		msgID := gocql.TimeUUID()
 		if err := session.Query(
 			`INSERT INTO arteria.messages_internal (message_id, from_user, to_user, subject, body, is_read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
