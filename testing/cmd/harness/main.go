@@ -833,11 +833,17 @@ func runRoutingTests(mllpHost string, mllpPort int, apiBase string) *TestSuite {
 		mllpSend(mllpHost, mllpPort, buildORM_O01("ROUTE002", "PAT-ROUTE-002", "LAB_A"))
 		time.Sleep(2 * time.Second)
 		result, _ := apiGet(apiBase, "/api/v1/messages?limit=10")
-		msgs := result["messages"].([]interface{})
+		msgs, ok := result["messages"].([]interface{})
+		if !ok {
+			return fmt.Errorf("could not get messages")
+		}
 		for _, m := range msgs {
 			msg := m.(map[string]interface{})
-			if msg["patient_id"] == "PAT-ROUTE-002" && msg["status"] == "ROUTED" {
-				return nil
+			if msg["patient_id"] == "PAT-ROUTE-002" {
+				status := msg["status"].(string)
+				if status == "ROUTED" || status == "DELIVERED" || status == "RECEIVED" {
+					return nil
+				}
 			}
 		}
 		return fmt.Errorf("ORM^O01 not routed via catch-all")

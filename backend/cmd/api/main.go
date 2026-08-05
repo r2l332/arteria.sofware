@@ -1219,14 +1219,21 @@ func changePasswordHandler(session *gocql.Session, cfg auth.Config) fiber.Handle
 			return c.Status(400).JSON(fiber.Map{"error": err.Error(), "policy": policy})
 		}
 
-		// Verify current password
 		userID, _ := gocql.ParseUUID(claims.UserID)
-		var currentHash string
-		session.Query(`SELECT password_hash FROM arteria.users WHERE user_id = ?`, userID).Scan(&currentHash)
 
-		if !auth.CheckPassword(body.CurrentPassword, currentHash) {
-			return c.Status(401).JSON(fiber.Map{"error": "current password is incorrect"})
+		// Check if this is a forced password change (first login)
+		var mustChange bool
+		session.Query(`SELECT must_change_password FROM arteria.users WHERE user_id = ?`, userID).Scan(&mustChange)
+
+		if !mustChange {
+			// Normal change: verify current password
+			var currentHash string
+			session.Query(`SELECT password_hash FROM arteria.users WHERE user_id = ?`, userID).Scan(&currentHash)
+			if !auth.CheckPassword(body.CurrentPassword, currentHash) {
+				return c.Status(401).JSON(fiber.Map{"error": "current password is incorrect"})
+			}
 		}
+		// If must_change_password=true, skip current password check (forced change)
 
 		newHash, _ := auth.HashPassword(body.NewPassword)
 		session.Query(`UPDATE arteria.users SET password_hash = ?, must_change_password = ? WHERE user_id = ?`, newHash, false, userID).Exec()

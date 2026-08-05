@@ -36,7 +36,7 @@ export default function ForceChangePassword() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          current_password: 'arteria123',
+          current_password: '',
           new_password: newPassword,
         }),
       });
