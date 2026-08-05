@@ -18,9 +18,11 @@ import {
   Users,
   Settings,
   Key,
+  Mail,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
+import { apiFetch } from '@/lib/api';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1';
 
@@ -42,6 +44,7 @@ const allNav: NavItem[] = [
   { href: '/fhir', label: 'FHIR Resources', icon: Heart, module: 'fhir', section: 'core' },
   { href: '/dicom', label: 'DICOM Nodes', icon: Scan, module: 'dicom', section: 'core' },
   { href: '/playground', label: 'JS Playground', icon: Code2, module: 'routes-js', section: 'tools' },
+  { href: '/messages-internal', label: 'Team Messages', icon: Mail, section: 'tools' },
   { href: '/errors', label: 'Errors / DLQ', icon: AlertTriangle, section: 'tools' },
   { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
@@ -51,12 +54,24 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { username, role, logout } = useAuth();
   const [modules, setModules] = useState<Record<string, boolean>>({ hl7: true, tunnel: true, 'routes-js': true });
+  const [onlineCount, setOnlineCount] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/config/modules`)
       .then(r => r.json())
       .then(d => setModules(d.modules || {}))
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const fetchOnline = () => {
+      apiFetch<{ count: number }>('/users/online')
+        .then(d => setOnlineCount(d.count))
+        .catch(() => {});
+    };
+    fetchOnline();
+    const interval = setInterval(fetchOnline, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const visibleNav = allNav.filter(item => {
@@ -177,7 +192,7 @@ export default function Sidebar() {
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-arteria-success animate-pulse-slow" />
-            <span className="text-2xs text-arteria-muted">Online</span>
+            <span className="text-2xs text-arteria-muted">{onlineCount} online</span>
           </div>
           <span className="text-2xs text-arteria-muted">v0.1.0</span>
         </div>

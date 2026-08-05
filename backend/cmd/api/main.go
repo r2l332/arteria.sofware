@@ -87,6 +87,9 @@ func main() {
 	auditLog := security.NewAuditLogger(session)
 	_ = auditLog // Used in login handler and audit middleware
 
+	// Session tracker (5-minute idle timeout = considered offline)
+	sessionTracker := auth.NewSessionTracker(5 * time.Minute)
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -95,7 +98,7 @@ func main() {
 	app.Post("/api/v1/auth/login", loginHandler(session, authCfg, loginLimiter, auditLog))
 
 	// --- Auth Middleware for all /api/v1/* routes ---
-	api := app.Group("/api/v1", authMiddleware(authCfg.JWTSecret))
+	api := app.Group("/api/v1", authMiddleware(authCfg.JWTSecret, sessionTracker))
 
 	// --- Auth Management ---
 	api.Get("/auth/me", func(c *fiber.Ctx) error {
@@ -203,6 +206,23 @@ func main() {
 	api.Put("/users/:id/role", auth.RequirePermission(auth.PermUserManage), updateUserRole(session))
 	api.Delete("/users/:id", auth.RequirePermission(auth.PermUserManage), deleteUser(session))
 	api.Get("/roles", auth.RequirePermission(auth.PermUserView), listRoles())
+	api.Get("/users/online", func(c *fiber.Ctx) error {
+		online := sessionTracker.Online()
+		return c.JSON(fiber.Map{"online_users": online, "count": len(online)})
+	})
+
+	// --- In-App Messaging ---
+	api.Get("/messages/internal/inbox", getInbox(session))
+	api.Get("/messages/internal/sent", getSentMessages(session))
+	api.Post("/messages/internal", sendMessage(session))
+	api.Put("/messages/internal/:id/read", markMessageRead(session))
+	api.Get("/messages/internal/unread-count", getUnreadCount(session))
+
+	// --- Organisations (Multi-Tenant) ---
+	api.Get("/organisations", auth.RequirePermission(auth.PermConfigManage), listOrganisations(session))
+	api.Post("/organisations", auth.RequirePermission(auth.PermConfigManage), createOrganisation(session))
+	api.Get("/organisations/:id", auth.RequirePermission(auth.PermConfigView), getOrganisation(session))
+	api.Put("/organisations/:id/branding", auth.RequirePermission(auth.PermConfigManage), updateOrganisationBranding(session))
 
 	// --- Connector Types (reference for CP creation) ---
 	api.Get("/connector-types", func(c *fiber.Ctx) error {
@@ -1108,7 +1128,7 @@ func boolVal(m map[string]interface{}, key string) bool {
 
 // ==================== Authentication ====================
 
-func authMiddleware(jwtSecret string) fiber.Handler {
+func authMiddleware(jwtSecret string, tracker *auth.SessionTracker) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		// Allow module config without auth (needed for sidebar before login)
 		if c.Path() == "/api/v1/config/modules" {
@@ -1132,6 +1152,11 @@ func authMiddleware(jwtSecret string) fiber.Handler {
 		claims, err := auth.ValidateToken(tokenStr, jwtSecret)
 		if err != nil {
 			return c.Status(401).JSON(fiber.Map{"error": "invalid or expired token"})
+		}
+
+		// Track session activity
+		if tracker != nil {
+			tracker.Touch(claims.UserID, claims.Username, claims.Role, c.IP(), c.Get("User-Agent"))
 		}
 
 		c.Locals("claims", claims)
@@ -1569,5 +1594,232 @@ func listRoles() fiber.Handler {
 			})
 		}
 		return c.JSON(fiber.Map{"roles": roles})
+	}
+}
+
+// ==================== In-App Messaging ====================
+
+func getInbox(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+		var messages []fiber.Map
+		iter := session.Query(`SELECT message_id, from_user, to_user, subject, body, is_read, created_at FROM arteria.messages_internal WHERE to_user = ?`, claims.Username).Iter()
+		var msgID gocql.UUID
+		var from, to, subject, body string
+		var isRead bool
+		var createdAt time.Time
+		for iter.Scan(&msgID, &from, &to, &subject, &body, &isRead, &createdAt) {
+			messages = append(messages, fiber.Map{
+				"message_id": msgID.String(), "from": from, "to": to,
+				"subject": subject, "body": body, "is_read": isRead, "created_at": createdAt,
+			})
+		}
+		iter.Close()
+		if messages == nil {
+			messages = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"messages": messages, "count": len(messages)})
+	}
+}
+
+func getSentMessages(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+		var messages []fiber.Map
+		iter := session.Query(`SELECT message_id, from_user, to_user, subject, body, is_read, created_at FROM arteria.messages_internal WHERE from_user = ?`, claims.Username).Iter()
+		var msgID gocql.UUID
+		var from, to, subject, body string
+		var isRead bool
+		var createdAt time.Time
+		for iter.Scan(&msgID, &from, &to, &subject, &body, &isRead, &createdAt) {
+			messages = append(messages, fiber.Map{
+				"message_id": msgID.String(), "from": from, "to": to,
+				"subject": subject, "body": body, "is_read": isRead, "created_at": createdAt,
+			})
+		}
+		iter.Close()
+		if messages == nil {
+			messages = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"messages": messages, "count": len(messages)})
+	}
+}
+
+func sendMessage(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+		var body struct {
+			To      string `json:"to"`
+			Subject string `json:"subject"`
+			Body    string `json:"body"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.To == "" || body.Subject == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "to and subject required"})
+		}
+
+		msgID := gocql.TimeUUID()
+		if err := session.Query(
+			`INSERT INTO arteria.messages_internal (message_id, from_user, to_user, subject, body, is_read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			msgID, claims.Username, body.To, body.Subject, body.Body, false, time.Now(),
+		).Exec(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.Status(201).JSON(fiber.Map{"message_id": msgID.String(), "status": "sent"})
+	}
+}
+
+func markMessageRead(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		msgID, err := gocql.ParseUUID(id)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid message id"})
+		}
+		session.Query(`UPDATE arteria.messages_internal SET is_read = ? WHERE message_id = ?`, true, msgID).Exec()
+		return c.JSON(fiber.Map{"status": "read"})
+	}
+}
+
+func getUnreadCount(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		claims := c.Locals("claims").(*auth.Claims)
+		var count int
+		session.Query(`SELECT COUNT(*) FROM arteria.messages_internal WHERE to_user = ? AND is_read = false ALLOW FILTERING`, claims.Username).Scan(&count)
+		return c.JSON(fiber.Map{"unread": count})
+	}
+}
+
+// ==================== Organisations (Multi-Tenant) ====================
+
+func listOrganisations(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var orgs []fiber.Map
+		iter := session.Query(`SELECT org_id, name, slug, custom_domain, is_active, created_at FROM arteria.organisations`).Iter()
+		var orgID gocql.UUID
+		var name, slug, domain string
+		var isActive bool
+		var createdAt time.Time
+		for iter.Scan(&orgID, &name, &slug, &domain, &isActive, &createdAt) {
+			orgs = append(orgs, fiber.Map{
+				"org_id": orgID.String(), "name": name, "slug": slug,
+				"custom_domain": domain, "is_active": isActive, "created_at": createdAt,
+			})
+		}
+		iter.Close()
+		if orgs == nil {
+			orgs = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"organisations": orgs, "count": len(orgs)})
+	}
+}
+
+func createOrganisation(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Name         string `json:"name"`
+			Slug         string `json:"slug"`
+			CustomDomain string `json:"custom_domain"`
+			SupportEmail string `json:"support_email"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		if body.Name == "" || body.Slug == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "name and slug required"})
+		}
+
+		orgID := gocql.TimeUUID()
+		if err := session.Query(
+			`INSERT INTO arteria.organisations (org_id, name, slug, custom_domain, support_email, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			orgID, body.Name, body.Slug, body.CustomDomain, body.SupportEmail, true, time.Now(), time.Now(),
+		).Exec(); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.Status(201).JSON(fiber.Map{"org_id": orgID.String(), "name": body.Name, "slug": body.Slug})
+	}
+}
+
+func getOrganisation(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		orgID, err := gocql.ParseUUID(id)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid org id"})
+		}
+
+		var name, slug, domain, logo, appName, primaryColor, accentColor, favicon, supportEmail string
+		var isActive bool
+		var createdAt time.Time
+		err = session.Query(
+			`SELECT name, slug, custom_domain, branding_logo_url, branding_app_name, branding_primary_color, branding_accent_color, branding_favicon_url, support_email, is_active, created_at FROM arteria.organisations WHERE org_id = ?`, orgID,
+		).Scan(&name, &slug, &domain, &logo, &appName, &primaryColor, &accentColor, &favicon, &supportEmail, &isActive, &createdAt)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "organisation not found"})
+		}
+
+		return c.JSON(fiber.Map{
+			"org_id": orgID.String(), "name": name, "slug": slug, "custom_domain": domain,
+			"branding": fiber.Map{
+				"logo_url":      logo,
+				"app_name":      appName,
+				"primary_color": primaryColor,
+				"accent_color":  accentColor,
+				"favicon_url":   favicon,
+			},
+			"support_email": supportEmail, "is_active": isActive, "created_at": createdAt,
+		})
+	}
+}
+
+func updateOrganisationBranding(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id := c.Params("id")
+		orgID, err := gocql.ParseUUID(id)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid org id"})
+		}
+
+		var body struct {
+			LogoURL      *string `json:"logo_url"`
+			AppName      *string `json:"app_name"`
+			PrimaryColor *string `json:"primary_color"`
+			AccentColor  *string `json:"accent_color"`
+			FaviconURL   *string `json:"favicon_url"`
+			CustomDomain *string `json:"custom_domain"`
+			SupportEmail *string `json:"support_email"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		now := time.Now()
+		if body.LogoURL != nil {
+			session.Query(`UPDATE arteria.organisations SET branding_logo_url = ?, updated_at = ? WHERE org_id = ?`, *body.LogoURL, now, orgID).Exec()
+		}
+		if body.AppName != nil {
+			session.Query(`UPDATE arteria.organisations SET branding_app_name = ?, updated_at = ? WHERE org_id = ?`, *body.AppName, now, orgID).Exec()
+		}
+		if body.PrimaryColor != nil {
+			session.Query(`UPDATE arteria.organisations SET branding_primary_color = ?, updated_at = ? WHERE org_id = ?`, *body.PrimaryColor, now, orgID).Exec()
+		}
+		if body.AccentColor != nil {
+			session.Query(`UPDATE arteria.organisations SET branding_accent_color = ?, updated_at = ? WHERE org_id = ?`, *body.AccentColor, now, orgID).Exec()
+		}
+		if body.FaviconURL != nil {
+			session.Query(`UPDATE arteria.organisations SET branding_favicon_url = ?, updated_at = ? WHERE org_id = ?`, *body.FaviconURL, now, orgID).Exec()
+		}
+		if body.CustomDomain != nil {
+			session.Query(`UPDATE arteria.organisations SET custom_domain = ?, updated_at = ? WHERE org_id = ?`, *body.CustomDomain, now, orgID).Exec()
+		}
+		if body.SupportEmail != nil {
+			session.Query(`UPDATE arteria.organisations SET support_email = ?, updated_at = ? WHERE org_id = ?`, *body.SupportEmail, now, orgID).Exec()
+		}
+
+		return c.JSON(fiber.Map{"status": "updated"})
 	}
 }
