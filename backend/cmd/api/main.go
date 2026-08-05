@@ -97,6 +97,58 @@ func main() {
 	// --- Public Auth Endpoints (no middleware) ---
 	app.Post("/api/v1/auth/login", loginHandler(session, authCfg, loginLimiter, auditLog))
 
+	// --- Public Branding (no auth — loaded before login for whitelabel) ---
+	app.Get("/api/v1/branding", func(c *fiber.Ctx) error {
+		// Resolve tenant from Host header or query param
+		host := c.Hostname()
+		slug := c.Query("slug", "")
+
+		var orgID gocql.UUID
+		var name, brandSlug, logo, appName, primaryColor, accentColor, favicon, supportEmail string
+		var found bool
+
+		if slug != "" {
+			err := session.Query(
+				`SELECT org_id, name, slug, branding_logo_url, branding_app_name, branding_primary_color, branding_accent_color, branding_favicon_url, support_email FROM arteria.organisations WHERE slug = ? ALLOW FILTERING`, slug,
+			).Scan(&orgID, &name, &brandSlug, &logo, &appName, &primaryColor, &accentColor, &favicon, &supportEmail)
+			found = err == nil
+		}
+
+		if !found && host != "" {
+			err := session.Query(
+				`SELECT org_id, name, slug, branding_logo_url, branding_app_name, branding_primary_color, branding_accent_color, branding_favicon_url, support_email FROM arteria.organisations WHERE custom_domain = ? ALLOW FILTERING`, host,
+			).Scan(&orgID, &name, &brandSlug, &logo, &appName, &primaryColor, &accentColor, &favicon, &supportEmail)
+			found = err == nil
+		}
+
+		if !found {
+			// Default branding
+			return c.JSON(fiber.Map{
+				"org_id":    nil,
+				"app_name":  "Arteria",
+				"subtitle":  "Integration Engine",
+				"logo_url":  "",
+				"primary_color": "#6366f1",
+				"accent_color":  "#6366f1",
+				"favicon_url":   "",
+				"support_email": "",
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"org_id":        orgID.String(),
+			"app_name":      orDefault(appName, "Arteria"),
+			"subtitle":      "Integration Engine",
+			"logo_url":      logo,
+			"primary_color": orDefault(primaryColor, "#6366f1"),
+			"accent_color":  orDefault(accentColor, "#6366f1"),
+			"favicon_url":   favicon,
+			"support_email": supportEmail,
+			"slug":          brandSlug,
+			"org_name":      name,
+		})
+	})
+
 	// --- Auth Middleware for all /api/v1/* routes ---
 	api := app.Group("/api/v1", authMiddleware(authCfg.JWTSecret, sessionTracker))
 
@@ -219,10 +271,10 @@ func main() {
 	api.Get("/messages/internal/unread-count", getUnreadCount(session))
 
 	// --- Organisations (Multi-Tenant) ---
-	api.Get("/organisations", auth.RequirePermission(auth.PermConfigManage), listOrganisations(session))
-	api.Post("/organisations", auth.RequirePermission(auth.PermConfigManage), createOrganisation(session))
-	api.Get("/organisations/:id", auth.RequirePermission(auth.PermConfigView), getOrganisation(session))
-	api.Put("/organisations/:id/branding", auth.RequirePermission(auth.PermConfigManage), updateOrganisationBranding(session))
+	api.Get("/organisations", auth.RequirePermission(auth.PermOrgView), listOrganisations(session))
+	api.Post("/organisations", auth.RequirePermission(auth.PermOrgManage), createOrganisation(session))
+	api.Get("/organisations/:id", auth.RequirePermission(auth.PermOrgView), getOrganisation(session))
+	api.Put("/organisations/:id/branding", auth.RequirePermission(auth.PermOrgManage), updateOrganisationBranding(session))
 
 	// --- Connector Types (reference for CP creation) ---
 	api.Get("/connector-types", func(c *fiber.Ctx) error {
@@ -813,6 +865,13 @@ func getStats(session *gocql.Session) fiber.Handler {
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func orDefault(val, fallback string) string {
+	if val != "" {
+		return val
 	}
 	return fallback
 }

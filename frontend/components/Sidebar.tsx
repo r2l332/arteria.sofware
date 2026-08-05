@@ -19,10 +19,12 @@ import {
   Settings,
   Key,
   Mail,
+  Building2,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api';
+import { useBranding } from '@/lib/branding';
 
 const API_BASE = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
 
@@ -48,11 +50,13 @@ const allNav: NavItem[] = [
   { href: '/errors', label: 'Errors / DLQ', icon: AlertTriangle, section: 'tools' },
   { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
+  { href: '/organisations', label: 'Organisations', icon: Building2, module: 'platform', section: 'tools' },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const { username, role, logout } = useAuth();
+  const branding = useBranding();
   const [modules, setModules] = useState<Record<string, boolean>>({ hl7: true, tunnel: true, 'routes-js': true });
   const [onlineCount, setOnlineCount] = useState(0);
 
@@ -76,8 +80,8 @@ export default function Sidebar() {
 
   const visibleNav = allNav.filter(item => {
     if (!item.module) return true;
-    // RBAC page only visible to admin and security
-    if (item.module === 'rbac') return role === 'admin' || role === 'security';
+    if (item.module === 'rbac') return role === 'admin' || role === 'security' || role === 'super_admin';
+    if (item.module === 'platform') return role === 'super_admin' || role === 'admin';
     return modules[item.module];
   });
   const coreItems = visibleNav.filter(i => i.section === 'core');
@@ -89,15 +93,20 @@ export default function Sidebar() {
       {/* Brand */}
       <div className="px-5 py-5">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-arteria-accent to-purple-500 flex items-center justify-center">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" />
-              <path d="M2 17l10 5 10-5" />
-              <path d="M2 12l10 5 10-5" />
-            </svg>
-          </div>
+          {branding.logo_url ? (
+            <img src={branding.logo_url} alt={branding.app_name} className="w-8 h-8 rounded-lg object-contain" />
+          ) : (
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${branding.primary_color}, #a855f7)` }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+            </div>
+          )}
           <div>
-            <h1 className="text-sm font-semibold text-white tracking-tight">Arteria</h1>
+            <h1 className="text-sm font-semibold text-white tracking-tight">{branding.app_name}</h1>
+            <p className="text-2xs text-arteria-muted">{branding.subtitle}</p>
             <p className="text-2xs text-arteria-muted">Integration Engine</p>
           </div>
         </div>

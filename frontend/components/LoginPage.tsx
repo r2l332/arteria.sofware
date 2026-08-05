@@ -2,10 +2,12 @@
 
 import { useState, FormEvent } from 'react';
 import { useAuth } from '@/lib/auth';
+import { useBranding } from '@/lib/branding';
 import { Lock, ArrowRight, AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const branding = useBranding();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -28,15 +30,19 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-arteria-accent to-purple-500 flex items-center justify-center mx-auto mb-4">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z" />
-              <path d="M2 17l10 5 10-5" />
-              <path d="M2 12l10 5 10-5" />
-            </svg>
-          </div>
-          <h1 className="text-xl font-semibold text-white">Arteria</h1>
-          <p className="text-sm text-arteria-muted mt-1">Integration Engine</p>
+          {branding.logo_url ? (
+            <img src={branding.logo_url} alt={branding.app_name} className="w-12 h-12 rounded-xl mx-auto mb-4 object-contain" />
+          ) : (
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: `linear-gradient(135deg, ${branding.primary_color}, #a855f7)` }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+            </div>
+          )}
+          <h1 className="text-xl font-semibold text-white">{branding.app_name}</h1>
+          <p className="text-sm text-arteria-muted mt-1">{branding.subtitle}</p>
         </div>
 
         {/* Login Card */}

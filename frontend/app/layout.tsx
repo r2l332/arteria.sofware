@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthGate } from '@/components/AuthGate';
+import { BrandingProvider } from '@/lib/branding';
 
 export const metadata: Metadata = {
   title: 'Arteria — Integration Engine',
@@ -16,7 +17,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
       </head>
       <body className="antialiased">
-        <AuthGate>{children}</AuthGate>
+        <BrandingProvider>
+          <AuthGate>{children}</AuthGate>
+        </BrandingProvider>
       </body>
     </html>
   );
