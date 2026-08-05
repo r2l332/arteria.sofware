@@ -239,7 +239,8 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Recent Messages */}
+          {/* Recent Messages (org users only) */}
+          {!isPlatform && (
           <div className="card">
             <div className="card-header flex items-center justify-between">
               <h3 className="text-sm font-medium text-white">Recent Messages</h3>
@@ -275,9 +276,10 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
+          )}
 
-          {/* Recent Errors */}
-          {recentErrors.length > 0 && (
+          {/* Recent Errors (org users only) */}
+          {!isPlatform && recentErrors.length > 0 && (
             <div className="card border-red-500/20">
               <div className="card-header flex items-center justify-between">
                 <div className="flex items-center gap-2">
