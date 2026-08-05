@@ -20,17 +20,21 @@ docker compose up -d
 
 **Default credentials:** `admin` / `arteria123` — you will be prompted to set a new password on first login.
 
-This starts 6 containers:
+This starts 10 containers:
 
 | Container | Image | Purpose |
 |-----------|-------|---------|
 | `arteria-nats` | `nats:2-alpine` | NATS JetStream message broker |
 | `arteria-scylladb` | `scylladb/scylla` | ScyllaDB database |
 | `arteria-scylla-init` | `scylladb/scylla` | One-shot schema initialization |
-| `arteria-ingestion` | Built from `backend/` | MLLP → NATS ingest |
-| `arteria-processing` | Built from `backend/` | NATS → V8 filter → ScyllaDB |
+| `arteria-ingestion` | Built from `backend/` | MLLP → NATS ingest (inbound) |
+| `arteria-processing` | Built from `backend/` | NATS → V8 filter → route |
+| `arteria-egress` | Built from `backend/` | Route → deliver to output CPs |
 | `arteria-api` | Built from `backend/` | REST API for dashboard |
 | `arteria-frontend` | Built from `frontend/` | Next.js dashboard |
+| `arteria-tunnel-broker` | Built from `backend/` | Aorta mTLS broker |
+| `arteria-caddy` | `caddy:2-alpine` | TLS reverse proxy |
+| `arteria-backup` | Built from root | Scheduled config backup |
 
 ### Verify health
 
@@ -200,12 +204,13 @@ services:
 
 ### Dashboard
 
-Access at `http://localhost:3000`:
+Access at `https://your-domain`:
 
 - **Dashboard** — Live throughput metrics, recent messages, errors
 - **Messages** — Full message log with detail viewer (raw + transformed payload)
 - **Routes** — Route configuration with Monaco JS editor for filters
 - **Comm Points** — Communication point management with live log viewer
+- **Aorta Mesh** — Capillary node management + enrollment
 - **Errors / DLQ** — Dead letter queue viewer
 
 ### NATS Monitoring

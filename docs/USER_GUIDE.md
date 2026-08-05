@@ -283,11 +283,11 @@ When no errors exist, the page shows: "No errors — all systems operational"
    - Protocol: MLLP, Port: 2575 (or custom)
 
 2. **Create an OUTPUT Communication Point** — defines where to deliver processed messages
-   - Protocol: MLLP or HTTP, Host: target system address, Port: target port
+   - Protocol: MLLP, HTTP/Webhook, or Discard (null sink for testing)
+   - Host: target system address, Port: target port
+   - For testing without a real destination, use **Discard (Null Sink)**
 
 3. **Create a Route** — connects the input to the output
-   - Source Comm Point: your INPUT CP
-   - Dest Comm Point: your OUTPUT CP
    - Source Topic: the HL7 message type to match (e.g., `ADT^A01` or `*`)
    - Destination Topic: a logical name for the route
 
@@ -296,7 +296,33 @@ When no errors exist, the page shows: "No errors — all systems operational"
    - Add a JS transform to modify or enrich messages
    - Arrange execution order (lower numbers run first)
 
-5. **Monitor** — go to the Dashboard to watch throughput, or click the CP to see its live log
+5. **Messages flow automatically:**
+   ```
+   INPUT CP → Ingestion → NATS → Processing (filters) → Route → Egress → OUTPUT CP
+   ```
+   The egress service picks up routed messages and delivers them to all matching OUTPUT CPs.
+
+6. **Monitor** — go to the Dashboard to watch throughput, or click the CP to see its live log
+
+### Message Pipeline (End-to-End)
+
+```
+Hospital System → MLLP :2575 → [Ingestion] → NATS arteria.ingest.raw
+                                                         │
+                                                         ▼
+                                              [Processing + V8 Filters]
+                                                         │
+                                                         ▼
+                                              NATS arteria.route.<topic>
+                                                         │
+                                                         ▼
+                                                [Egress Service]
+                                                    │         │
+                                           ┌────────┘         └────────┐
+                                           ▼                           ▼
+                                    OUTPUT CP (MLLP)           OUTPUT CP (HTTP)
+                                    Lab System :2576           EMR Webhook
+```
 
 ### Debugging a Failed Message
 

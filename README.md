@@ -39,7 +39,7 @@ Hospital Network                    Internet (TLS 1.3)              Cloud / Arte
 | Frontend | Next.js 14 + Tailwind | Dashboard with Monaco editor and JS playground |
 | Auth | JWT + bcrypt + RBAC | 5 roles, 33 permissions, rate limiting, audit logging |
 | Testing | Go test harness | 35 automated tests across 6 suites |
-| Infrastructure | Docker Compose | 9-service production stack |
+| Infrastructure | Docker Compose | 10-service production stack |
 
 ## Security (Healthcare/HIPAA Ready)
 
@@ -145,8 +145,8 @@ git clone https://github.com/r2l332/arteria.app.git
 cd arteria.app
 docker compose up -d
 
-# 9 services start: NATS, ScyllaDB, Ingestion, Processing, API,
-# Frontend, Tunnel Broker, Caddy (TLS), Backup (cron)
+# 10 services start: NATS, ScyllaDB, Ingestion, Processing, Egress,
+# API, Frontend, Aorta Broker, Caddy (TLS), Backup (cron)
 
 # Dashboard:  https://localhost  (self-signed cert auto-generated)
 # API:        https://localhost/api/v1
@@ -176,11 +176,12 @@ printf '\x0bMSH|^~\\&|SRC|HOSP|DST|FAC|202608040800||ADT^A01|123|P|2.3\rPID|||PA
 | Container | Port | Purpose |
 |-----------|------|---------|
 | arteria-caddy | 80, 443 | TLS reverse proxy (auto-cert) |
-| arteria-ingestion | 2575 | MLLP TCP listener |
-| arteria-api | 8080 | REST API (50 endpoints) |
+| arteria-ingestion | 2575 | MLLP TCP listener (inbound) |
+| arteria-processing | — | V8 filter chain engine |
+| arteria-egress | — | Outbound delivery (MLLP, HTTP, Discard) |
+| arteria-api | 8080 | REST API (52 endpoints) |
 | arteria-frontend | 3000 | Next.js dashboard |
 | arteria-tunnel-broker | 9443 | Aorta mTLS broker |
-| arteria-processing | — | V8 filter chain engine |
 | arteria-nats | 4222, 8222 | NATS JetStream |
 | arteria-scylladb | 9042 | ScyllaDB |
 | arteria-backup | — | Scheduled config backup (every 6h) |
