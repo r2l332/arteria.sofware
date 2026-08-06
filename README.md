@@ -1,4 +1,4 @@
-# Arteria.app
+# Arteria.sofware
 
 A high-throughput, cloud-native HL7v2/FHIR/DICOM interoperability engine designed for 25M+ messages/day. Built for speed — with an encrypted Aorta mesh that eliminates the need for VPNs, and enterprise-grade security for healthcare environments.
 
