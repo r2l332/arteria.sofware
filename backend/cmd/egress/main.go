@@ -160,11 +160,26 @@ func handleRoutedMessage(m *nats.Msg, session *gocql.Session) {
 
 	met.Received.Add(1)
 
-	// Find matching output CPs for this topic
+	// Check for explicit destination CP (precise routing from processing engine)
+	destCPID := ""
+	if m.Header != nil {
+		destCPID = m.Header.Get("X-Dest-CP")
+	}
+
+	// Find matching output CPs
 	outputCPsMu.RLock()
 	var targets []OutputCP
 	for _, cp := range outputCPs {
-		if cp.IsActive && (cp.DestTopic == destTopic || cp.DestTopic == "*") {
+		if !cp.IsActive {
+			continue
+		}
+		// Precise match: route specified exactly which CP to deliver to
+		if destCPID != "" && cp.CommPointID == destCPID {
+			targets = append(targets, cp)
+			break
+		}
+		// Fallback: topic-based matching (for routes without specific dest CP)
+		if destCPID == "" && (cp.DestTopic == destTopic || cp.DestTopic == "*") {
 			targets = append(targets, cp)
 		}
 	}

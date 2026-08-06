@@ -228,6 +228,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 
 	destTopic := result.DestinationTopic
 	transformedPayload := result.TransformedPayload
+	destCPID := result.DestCommPointID
 
 	updateMessageTransformed(session, gocqlID, transformedPayload, "ROUTED", now)
 
@@ -240,7 +241,13 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		"ROUTED", now, gocqlID, parsed.MessageType, parsed.PatientID).Exec()
 
 	routeSubject := subjectRoute + "." + destTopic
-	_, err = js.Publish(routeSubject, []byte(transformedPayload), nats.MsgId(msgID.String()))
+	msg := nats.NewMsg(routeSubject)
+	msg.Data = []byte(transformedPayload)
+	if destCPID != "" {
+		msg.Header = nats.Header{}
+		msg.Header.Set("X-Dest-CP", destCPID)
+	}
+	_, err = js.PublishMsg(msg, nats.MsgId(msgID.String()))
 	if err != nil {
 		log.Error("failed to publish routed message", logging.Fields{
 			"message_id":    msgID.String(),

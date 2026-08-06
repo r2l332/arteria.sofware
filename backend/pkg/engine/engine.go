@@ -132,8 +132,8 @@ func (e *Engine) StartConfigReloader(ctx context.Context, interval time.Duration
 }
 
 // ProcessMessage runs a message through the matching route's filter chain.
-// Returns: destination topic, transformed payload, error
-func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, string, error) {
+// Returns: destination topic, dest comm point ID, transformed payload, error
+func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, string, string, error) {
 	e.routesMu.RLock()
 	routes := e.routes
 	e.routesMu.RUnlock()
@@ -163,17 +163,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 	if matchedRoute == nil {
 		// No route matched, pass through
 		payloadBytes, _ := json.Marshal(envelope)
-		return "default", string(payloadBytes), nil
+		return "default", "", string(payloadBytes), nil
 	}
+
+	destCPID := matchedRoute.DestCommPoint.String()
 
 	// Execute filter chain
 	result, err := e.executeFilterChain(ctx, matchedRoute, envelope)
 	if err != nil {
-		return "", "", fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
+		return "", "", "", fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
 	}
 
 	if result.Action == "reject" {
-		return "", "", fmt.Errorf("message rejected by filter: %s", result.Reason)
+		return "", "", "", fmt.Errorf("message rejected by filter: %s", result.Reason)
 	}
 
 	destTopic := matchedRoute.DestinationTopic
@@ -183,11 +185,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 
 	// If no filters modified the message, pass through the raw payload unchanged
 	if len(matchedRoute.Filters) == 0 || !hasActiveFilters(matchedRoute.Filters) {
-		return destTopic, result.Output.RawPayload, nil
+		return destTopic, destCPID, result.Output.RawPayload, nil
 	}
 
 	outputBytes, _ := json.Marshal(result.Output)
-	return destTopic, string(outputBytes), nil
+	return destTopic, destCPID, string(outputBytes), nil
 }
 
 // executeFilterChain runs all active filters for a route in order.
