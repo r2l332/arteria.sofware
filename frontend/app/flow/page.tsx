@@ -69,7 +69,15 @@ export default function FlowPage() {
         if (msg.stage === 'routed') counts.current.routed++;
         if (msg.stage === 'error') counts.current.errors++;
       }
-      if (event.type === 'metric') setMetrics(event.data);
+      if (event.type === 'metric') {
+        setMetrics(event.data);
+        // Seed counters from processing metrics on first load
+        if (event.data.received && counts.current.received === 0) {
+          counts.current.received = event.data.received;
+          counts.current.routed = event.data.routed || 0;
+          counts.current.errors = event.data.errors || 0;
+        }
+      }
     });
     wsRef.current = ws;
     return () => { ws?.close(); };
