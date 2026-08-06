@@ -76,43 +76,33 @@ VALUES (
     'HL7 to JSON (Python)',
     'python',
     1,
-    'import sys, json
+    $$import sys, json
 
-def parse_hl7_to_json(raw_hl7):
-    segments = raw_hl7.replace("\\n", "\\r").split("\\r")
-    segments = [s for s in segments if s.strip()]
+def parse_hl7(raw):
+    for sep in [chr(13), chr(10), '\r']:
+        segs = raw.split(sep)
+        if len(segs) > 1:
+            break
+    else:
+        segs = [raw]
     result = {"segments": []}
-    for seg_str in segments:
-        fields = seg_str.split("|")
-        seg_type = fields[0] if fields else ""
-        segment = {"type": seg_type, "fields": fields[1:]}
-        if seg_type == "MSH":
-            segment["sending_application"] = fields[2] if len(fields) > 2 else ""
-            segment["sending_facility"] = fields[3] if len(fields) > 3 else ""
-            segment["timestamp"] = fields[6] if len(fields) > 6 else ""
-            segment["message_type"] = fields[8] if len(fields) > 8 else ""
-            segment["message_id"] = fields[9] if len(fields) > 9 else ""
-        elif seg_type == "PID":
-            segment["patient_id"] = fields[3] if len(fields) > 3 else ""
-            name_field = fields[5] if len(fields) > 5 else ""
-            name_parts = name_field.split("^")
-            segment["patient_name"] = {"family": name_parts[0] if name_parts else "", "given": name_parts[1] if len(name_parts) > 1 else ""}
-            segment["date_of_birth"] = fields[7] if len(fields) > 7 else ""
-            segment["sex"] = fields[8] if len(fields) > 8 else ""
-        elif seg_type == "PV1":
-            segment["patient_class"] = fields[2] if len(fields) > 2 else ""
-            segment["assigned_location"] = fields[3] if len(fields) > 3 else ""
-        result["segments"].append(segment)
+    for s in segs:
+        if not s.strip():
+            continue
+        fields = s.split("|")
+        seg = {"type": fields[0], "fields": fields[1:]}
+        if fields[0] == "PID" and len(fields) > 5:
+            name = fields[5].split("^")
+            seg["patient_name"] = {"family": name[0], "given": name[1] if len(name) > 1 else ""}
+            seg["patient_id"] = fields[3] if len(fields) > 3 else ""
+        result["segments"].append(seg)
     return result
 
 envelope = json.loads(sys.stdin.read())
-raw_hl7 = envelope.get("rawPayload", "")
-parsed = parse_hl7_to_json(raw_hl7)
-envelope["rawPayload"] = json.dumps(parsed)
+envelope["rawPayload"] = json.dumps(parse_hl7(envelope.get("rawPayload", "")))
 envelope["properties"] = envelope.get("properties") or {}
-envelope["properties"]["content_type"] = "application/json"
 envelope["properties"]["transform"] = "hl7_to_json"
-json.dump(envelope, sys.stdout)',
+json.dump(envelope, sys.stdout)$$,
     '{"description": "Parses HL7 message and converts to structured JSON"}',
     true,
     toTimestamp(now())
@@ -126,45 +116,28 @@ VALUES (
     'Extract Patient (Python)',
     'python',
     2,
-    'import sys, json
+    $$import sys, json
 
 envelope = json.loads(sys.stdin.read())
-raw_payload = envelope.get("rawPayload", "")
 try:
-    parsed = json.loads(raw_payload)
-except (json.JSONDecodeError, TypeError):
+    parsed = json.loads(envelope.get("rawPayload", "{}"))
+except:
     parsed = {"segments": []}
 
 patient_id = ""
 patient_name = ""
-dob = ""
-sex = ""
 for seg in parsed.get("segments", []):
     if seg.get("type") == "PID":
         patient_id = seg.get("patient_id", "")
-        name_obj = seg.get("patient_name", {})
-        if isinstance(name_obj, dict):
-            parts = [name_obj.get("given", ""), name_obj.get("family", "")]
-            patient_name = " ".join(p for p in parts if p)
-        dob = seg.get("date_of_birth", "")
-        sex = seg.get("sex", "")
+        n = seg.get("patient_name", {})
+        if isinstance(n, dict):
+            patient_name = (n.get("given", "") + " " + n.get("family", "")).strip()
         break
 
-message_id = envelope.get("messageId", "")
-message_type = envelope.get("messageType", "")
-trigger_event = envelope.get("triggerEvent", "")
-facility = envelope.get("sendingFacility", "")
-
-output = {
-    "messageId": message_id,
-    "messageType": message_type,
-    "triggerEvent": trigger_event,
-    "sendingFacility": facility,
-    "patientId": patient_id,
-    "rawPayload": json.dumps({"patient_id": patient_id, "patient_name": patient_name, "date_of_birth": dob, "sex": sex, "message_id": message_id, "facility": facility}),
-    "properties": {"patient_id": patient_id, "patient_name": patient_name, "content_type": "application/json", "transform": "patient_extract"}
-}
-json.dump(output, sys.stdout)',
+envelope["patientId"] = patient_id
+envelope["rawPayload"] = json.dumps({"patient_id": patient_id, "patient_name": patient_name})
+envelope["properties"] = {"patient_id": patient_id, "patient_name": patient_name, "transform": "patient_extract"}
+json.dump(envelope, sys.stdout)$$,
     '{"description": "Extracts patient name and ID from parsed JSON, outputs compact summary"}',
     true,
     toTimestamp(now())
