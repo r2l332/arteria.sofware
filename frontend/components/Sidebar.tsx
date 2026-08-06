@@ -20,6 +20,7 @@ import {
   Key,
   Mail,
   Building2,
+  Activity,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
@@ -39,6 +40,7 @@ interface NavItem {
 
 const allNav: NavItem[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard, section: 'core' },
+  { href: '/flow', label: 'Message Flow', icon: Activity, section: 'core' },
   { href: '/messages', label: 'Messages', icon: MessageSquare, section: 'core' },
   { href: '/routes', label: 'Routes & Filters', icon: GitBranch, module: 'routes-js', section: 'core' },
   { href: '/comm-points', label: 'Comm Points', icon: Radio, section: 'core' },

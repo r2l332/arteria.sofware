@@ -306,7 +306,7 @@ func (a *Agent) applyConfig(cfg *NodeConfig) {
 			a.listeners[m.LocalPort] = ln
 			log.Printf("[AGENT] listening on :%d → tunnel → broker:%d (%s)", m.LocalPort, m.TargetPort, m.Protocol)
 
-			go a.acceptAndForward(ln, m.TargetPort)
+			go a.acceptAndForward(ln, m.TargetPort, m.Protocol)
 		}
 	}
 
@@ -320,17 +320,17 @@ func (a *Agent) applyConfig(cfg *NodeConfig) {
 	}
 }
 
-func (a *Agent) acceptAndForward(ln net.Listener, targetPort int) {
+func (a *Agent) acceptAndForward(ln net.Listener, targetPort int, protocol string) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go a.tunnelToHost(conn, targetPort)
+		go a.tunnelToHost(conn, targetPort, protocol)
 	}
 }
 
-func (a *Agent) tunnelToHost(local net.Conn, targetPort int) {
+func (a *Agent) tunnelToHost(local net.Conn, targetPort int, protocol string) {
 	defer local.Close()
 
 	if a.session == nil || a.session.IsClosed() {
@@ -351,8 +351,8 @@ func (a *Agent) tunnelToHost(local net.Conn, targetPort int) {
 		return
 	}
 
-	if a.ACKMode {
-		// ACK mode: read the full MLLP message, forward it, then send ACK back
+	// MLLP ACK mode: read one message, forward, send ACK. Only for MLLP protocol.
+	if a.ACKMode && protocol == "MLLP" {
 		buf := make([]byte, 65536)
 		n, err := local.Read(buf)
 		if err != nil || n == 0 {
@@ -360,16 +360,14 @@ func (a *Agent) tunnelToHost(local net.Conn, targetPort int) {
 		}
 		data := buf[:n]
 
-		// Forward to broker via tunnel
 		if _, err := stream.Write(data); err != nil {
 			return
 		}
 
-		// Send MLLP ACK back to the sender
 		ack := buildMLLPAck(data)
 		local.Write(ack)
 	} else {
-		// Passthrough mode: relay bidirectionally (no ACK)
+		// Transparent relay: any protocol, bidirectional
 		done := make(chan struct{}, 2)
 		go func() { io.Copy(stream, local); done <- struct{}{} }()
 		go func() { io.Copy(local, stream); done <- struct{}{} }()

@@ -258,6 +258,17 @@ func deliverViaTunnel(cp OutputCP, payload []byte) error {
 		targetPort = cp.Port
 	}
 
+	// MLLP protocol requires framing around the payload
+	wirePayload := payload
+	if strings.ToUpper(cp.Protocol) == "MLLP" {
+		var buf bytes.Buffer
+		buf.WriteByte(startBlock)
+		buf.Write(payload)
+		buf.WriteByte(endBlock)
+		buf.WriteByte(cr)
+		wirePayload = buf.Bytes()
+	}
+
 	// Build the tunnel delivery request
 	req := struct {
 		NodeID     string `json:"node_id"`
@@ -268,7 +279,7 @@ func deliverViaTunnel(cp OutputCP, payload []byte) error {
 		NodeID:     cp.TunnelNodeID,
 		TargetPort: targetPort,
 		Protocol:   cp.Protocol,
-		Payload:    payload,
+		Payload:    wirePayload,
 	}
 
 	data, _ := json.Marshal(req)

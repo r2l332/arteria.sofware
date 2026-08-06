@@ -105,10 +105,22 @@ func main() {
 		// Route inbound traffic through NATS — broker can be anywhere in the world
 		OnInbound: func(nodeID string, targetPort int, data []byte) {
 			subject := "arteria.ingest.raw"
-			log.Printf("[BROKER] routing %d bytes from node %s via NATS subject %s", len(data), nodeID, subject)
+
+			// Strip MLLP framing if present (0x0B...payload...0x1C 0x0D)
+			payload := data
+			if len(payload) > 0 && payload[0] == 0x0B {
+				payload = payload[1:]
+			}
+			if len(payload) >= 2 && payload[len(payload)-2] == 0x1C && payload[len(payload)-1] == 0x0D {
+				payload = payload[:len(payload)-2]
+			} else if len(payload) >= 1 && payload[len(payload)-1] == 0x1C {
+				payload = payload[:len(payload)-1]
+			}
+
+			log.Printf("[BROKER] routing %d bytes from node %s via NATS subject %s", len(payload), nodeID, subject)
 			brokerBytesIn.Add(int64(len(data)))
 			brokerMsgsRouted.Add(1)
-			if _, err := js.Publish(subject, data); err != nil {
+			if _, err := js.Publish(subject, payload); err != nil {
 				log.Printf("[BROKER] NATS publish error: %v", err)
 			}
 		},
@@ -153,10 +165,10 @@ func main() {
 	// Listen for tunnel delivery requests from the egress service
 	nc.Subscribe("arteria.tunnel.deliver", func(msg *nats.Msg) {
 		var req struct {
-			NodeID     string          `json:"node_id"`
-			TargetPort int             `json:"target_port"`
-			Protocol   string          `json:"protocol"`
-			Payload    json.RawMessage `json:"payload"`
+			NodeID     string `json:"node_id"`
+			TargetPort int    `json:"target_port"`
+			Protocol   string `json:"protocol"`
+			Payload    []byte `json:"payload"`
 		}
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": "invalid request"})

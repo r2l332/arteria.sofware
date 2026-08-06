@@ -1,0 +1,85 @@
+# Capillary E2E Demo — Docker Compose
+#
+# This extends the main docker-compose.yml with:
+#   - A "VM application" that generates random HL7 and receives processed results
+#   - The Capillary agent that tunnels traffic to/from the Arteria engine
+#
+# Deployment modes:
+#   all-docker:    VM app + agent both in containers (default)
+#   app-on-host:   VM app on host, agent in container (FORWARD_HOST=host.docker.internal)
+#   agent-on-host: Agent on host, VM app in container (SEND_ADDR=host.docker.internal:2575)
+#
+# The demo flow:
+#   VM App (HL7 gen) → MLLP :2575 → Capillary Agent → Tunnel → Broker → Ingestion
+#   → Processing Engine (Python: HL7→JSON → Extract Patient) → Egress
+#   → Broker → Tunnel → Capillary Agent → MLLP :2576 → VM App (dashboard)
+
+services:
+  # The VM application: generates HL7, receives processed results, shows dashboard
+  demo-vm-app:
+    build:
+      context: ./demo/capillary-e2e/vm-app
+    container_name: demo-vm-app
+    ports:
+      - "8090:8090"    # Web dashboard
+      - "2576:2576"    # MLLP receiver for processed results
+    environment:
+      SEND_ADDR: "${SEND_ADDR:-demo-capillary-agent:2575}"
+      RECV_ADDR: ":2576"
+      WEB_PORT: "8090"
+      SEND_INTERVAL_MS: "${SEND_INTERVAL_MS:-3000}"
+      BURST_SIZE: "${BURST_SIZE:-1}"
+      SEND_COUNT: "${SEND_COUNT:-0}"
+      CONNECT_TIMEOUT_S: "60"
+    depends_on:
+      - demo-capillary-agent
+    restart: unless-stopped
+    # For agent-on-host mode, add extra_hosts to resolve host.docker.internal on Linux
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # The Capillary agent running "on the VM" — bridges local MLLP to/from Arteria
+  demo-capillary-agent:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.tunnel-agent
+    container_name: demo-capillary-agent
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    ports:
+      - "12575:2575"    # MLLP inbound — mapped to 12575 to avoid conflict with ingestion:2575
+    environment:
+      BROKER_ADDR: "tunnel-broker:9443"
+      AGENT_CONFIG_DIR: "/data/agent"
+      ENROLL_TOKEN: "demo-token-e2e-2024"
+      ACK_MODE: "true"
+      FORWARD_HOST: "${FORWARD_HOST:-demo-vm-app}"
+    volumes:
+      - agent_data:/data/agent
+      - ./demo/capillary-e2e/agent-entrypoint.sh:/entrypoint.sh:ro
+    depends_on:
+      - tunnel-broker
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # CQL seeder for the demo route/filters
+  demo-seed:
+    image: scylladb/scylla:latest
+    container_name: demo-seed
+    depends_on:
+      scylla-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./demo/capillary-e2e/seed-demo.cql:/seed-demo.cql:ro
+    entrypoint: >
+      bash -c "
+        echo 'Waiting for ScyllaDB keyspace...';
+        until cqlsh scylladb 9042 -e 'USE arteria' 2>/dev/null; do sleep 2; done;
+        echo 'Seeding demo route and filters...';
+        cqlsh scylladb 9042 -f /seed-demo.cql;
+        echo 'Demo seed complete.';
+      "
+    restart: "no"
+
+volumes:
+  agent_data:
