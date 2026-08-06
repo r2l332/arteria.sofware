@@ -38,7 +38,6 @@ export default function FlowPage() {
   const [testPayload, setTestPayload] = useState('');
   const [testResult, setTestResult] = useState('');
   const [recentMsgs, setRecentMsgs] = useState<any[]>([]);
-  const [draggedNode, setDraggedNode] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const counts = useRef({ received: 0, routed: 0, errors: 0 });
 
@@ -81,6 +80,28 @@ export default function FlowPage() {
     if (r) { setTracedMsg(r.message); setTraceSteps(r.steps); }
   };
 
+  const moveFilterUp = async (idx: number) => {
+    if (idx <= 0) return;
+    const newOrder = filters.map((f, i) => ({ filter_id: f.filter_id, position: i }));
+    [newOrder[idx], newOrder[idx - 1]] = [newOrder[idx - 1], newOrder[idx]];
+    const reordered = newOrder.map((o, i) => ({ ...o, position: i }));
+    const { reorderFilters } = await import('@/lib/api');
+    await reorderFilters(selectedRouteId, reordered);
+    const resp = await getFilters(selectedRouteId);
+    setFilters((resp.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
+  };
+
+  const moveFilterDown = async (idx: number) => {
+    if (idx >= filters.length - 1) return;
+    const newOrder = filters.map((f, i) => ({ filter_id: f.filter_id, position: i }));
+    [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
+    const reordered = newOrder.map((o, i) => ({ ...o, position: i }));
+    const { reorderFilters } = await import('@/lib/api');
+    await reorderFilters(selectedRouteId, reordered);
+    const resp = await getFilters(selectedRouteId);
+    setFilters((resp.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
+  };
+
   const selectedRoute = routes.find(r => r.route_id === selectedRouteId);
   const cpMap = new Map(commPoints.map(cp => [cp.comm_point_id, cp]));
   const srcCP = selectedRoute ? cpMap.get(selectedRoute.source_comm_point_id) : null;
@@ -90,7 +111,7 @@ export default function FlowPage() {
   const nodes: FlowNode[] = [];
   const colW = 260;
   let col = 0;
-  const yMid = 100;
+  const yMid = 170;
   const xOff = 120;
 
   if (srcCP) { nodes.push({ id: 'src', type: 'source', label: srcCP.name, sublabel: `${srcCP.protocol} :${srcCP.port}`, active: srcCP.is_active, count: counts.current.received, x: xOff + col * colW, y: yMid, data: srcCP }); col++; }
@@ -122,7 +143,7 @@ export default function FlowPage() {
         </div>
 
         {/* Flow canvas — Upwind style */}
-        <div className={clsx('shrink-0 relative overflow-x-auto border-b border-gray-800/30', 'bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]')} style={{ height: canvasH }}>
+        <div className={clsx('shrink-0 relative overflow-x-auto border-b border-gray-800/30', 'bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]')} style={{ height: 420 }}>
           <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/15 via-transparent to-purple-950/15 pointer-events-none" />
           {/* Stats chips */}
           <div className="absolute top-3 left-4 flex gap-2 z-10">
@@ -152,49 +173,12 @@ export default function FlowPage() {
                 </g>;
               })}
             </svg>
-            {/* Nodes — glassmorphic cards with drop zones */}
-            {nodes.map((n, idx) => (
+            {/* Nodes — glassmorphic cards */}
+            {nodes.map((n, idx) => {
+              const filterIdx = n.type === 'filter' ? filters.findIndex(f => f.filter_id === n.data?.filter_id) : -1;
+              return (
               <div key={n.id}
-                draggable={n.type === 'filter'}
-                onDragStart={(e) => {
-                  if (n.type !== 'filter') { e.preventDefault(); return; }
-                  e.dataTransfer.effectAllowed = 'move';
-                  e.dataTransfer.setData('application/json', JSON.stringify({ id: n.id, type: n.type, index: idx, filterId: n.data?.filter_id }));
-                  setDraggedNode(n.id);
-                }}
-                onDragEnd={() => setDraggedNode(null)}
-                onDragOver={(e) => {
-                  if (n.type === 'filter' && draggedNode && draggedNode !== n.id) {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                  }
-                }}
-                onDrop={async (e) => {
-                  e.preventDefault();
-                  if (n.type !== 'filter') return;
-                  try {
-                    const data = JSON.parse(e.dataTransfer.getData('application/json'));
-                    if (data.type === 'filter' && data.id !== n.id) {
-                      const newOrder = filters.map((f, i) => ({ filter_id: f.filter_id, position: i }));
-                      const fromIdx = newOrder.findIndex(o => o.filter_id === data.filterId);
-                      const toIdx = newOrder.findIndex(o => o.filter_id === n.data?.filter_id);
-                      if (fromIdx >= 0 && toIdx >= 0) {
-                        const [moved] = newOrder.splice(fromIdx, 1);
-                        newOrder.splice(toIdx, 0, moved);
-                        const reordered = newOrder.map((o, i) => ({ ...o, position: i }));
-                        const { reorderFilters } = await import('@/lib/api');
-                        await reorderFilters(selectedRouteId, reordered);
-                        const resp = await getFilters(selectedRouteId);
-                        setFilters((resp.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
-                      }
-                    }
-                  } catch (err) { console.error('Drop failed:', err); }
-                  setDraggedNode(null);
-                }}
-                className={clsx('absolute w-[160px] rounded-xl border p-3 transition-all duration-200 hover:scale-[1.04] backdrop-blur-xl bg-slate-900/80 shadow-2xl',
-                  n.type === 'filter' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
-                  draggedNode === n.id ? 'ring-2 ring-cyan-400 opacity-50 scale-110 z-50' : 'border-slate-800',
-                  draggedNode && draggedNode !== n.id && n.type === 'filter' ? 'ring-2 ring-dashed ring-cyan-400/50 bg-cyan-950/20' : '',
+                className={clsx('absolute w-[160px] rounded-xl border p-3 transition-all duration-200 hover:scale-[1.04] backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800',
                   !n.active && 'opacity-40 grayscale')}
                 style={{ left: n.x, top: n.y }}
               >
@@ -206,7 +190,13 @@ export default function FlowPage() {
                     <div className="text-[10px] font-semibold text-white truncate">{n.label}</div>
                     <div className="text-[8px] text-gray-500 font-mono truncate">{n.sublabel}</div>
                   </div>
-                  {n.type === 'filter' && <GripVertical className="w-3 h-3 text-gray-600" />}
+                  {/* Reorder arrows for filters */}
+                  {n.type === 'filter' && filters.length > 1 && (
+                    <div className="flex flex-col gap-0.5">
+                      {filterIdx > 0 && <button onClick={() => moveFilterUp(filterIdx)} className="text-[9px] text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 rounded px-1 leading-tight">◀</button>}
+                      {filterIdx < filters.length - 1 && <button onClick={() => moveFilterDown(filterIdx)} className="text-[9px] text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 rounded px-1 leading-tight">▶</button>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center justify-between">
                   <div className={clsx('text-center flex-1 py-1 rounded-lg', getBg(n.type))}>
@@ -219,7 +209,8 @@ export default function FlowPage() {
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

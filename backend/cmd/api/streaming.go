@@ -531,20 +531,41 @@ func registerRewireRoutes(app *fiber.App, session *gocql.Session) {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 		}
 
+		// Read all current filters for this route
+		type filterRow struct {
+			FilterID  gocql.UUID
+			Name      string
+			Type      string
+			Order     int
+			Script    string
+			Config    string
+			IsActive  bool
+		}
+		var existing []filterRow
+		iter := session.Query(`SELECT filter_id, name, filter_type, execution_order, js_script, config_json, is_active FROM arteria.filters WHERE route_id = ?`, routeID).Iter()
+		var fr filterRow
+		for iter.Scan(&fr.FilterID, &fr.Name, &fr.Type, &fr.Order, &fr.Script, &fr.Config, &fr.IsActive) {
+			existing = append(existing, fr)
+		}
+		iter.Close()
+
+		// Delete all existing filters for this route
+		for _, f := range existing {
+			session.Query(`DELETE FROM arteria.filters WHERE route_id = ? AND execution_order = ?`, routeID, f.Order).Exec()
+		}
+
+		// Re-insert with new ordering
+		filterMap := make(map[string]filterRow)
+		for _, f := range existing {
+			filterMap[f.FilterID.String()] = f
+		}
 		for _, item := range body.Order {
-			fID, _ := gocql.ParseUUID(item.FilterID)
-			// Delete old entry and re-insert with new order (CQL partition key includes execution_order)
-			var name, filterType, script, configJSON string
-			var isActive bool
-			session.Query(`SELECT name, filter_type, js_script, config_json, is_active FROM arteria.filters_by_id WHERE filter_id = ?`, fID).
-				Scan(&name, &filterType, &script, &configJSON, &isActive)
-			if name == "" {
+			f, ok := filterMap[item.FilterID]
+			if !ok {
 				continue
 			}
-			// Update the execution_order in filters table (delete + re-insert since it's part of PK)
-			session.Query(`DELETE FROM arteria.filters WHERE route_id = ? AND execution_order = ?`, routeID, item.Position).Exec()
 			session.Query(`INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				fID, routeID, name, filterType, item.Position, script, configJSON, isActive, time.Now()).Exec()
+				f.FilterID, routeID, f.Name, f.Type, item.Position, f.Script, f.Config, f.IsActive, time.Now()).Exec()
 		}
 
 		return c.JSON(fiber.Map{"status": "reordered"})
