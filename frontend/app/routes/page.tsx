@@ -14,6 +14,7 @@ interface RouteForm {
   description: string;
   source_comm_point_id: string;
   dest_comm_point_id: string;
+  fan_out_cp_ids: string[];
   source_topic: string;
   destination_topic: string;
   is_active: boolean;
@@ -21,7 +22,7 @@ interface RouteForm {
 
 const emptyRouteForm: RouteForm = {
   name: '', description: '', source_comm_point_id: '', dest_comm_point_id: '',
-  source_topic: '', destination_topic: '', is_active: true,
+  fan_out_cp_ids: [], source_topic: '', destination_topic: '', is_active: true,
 };
 
 export default function RoutesPage() {
@@ -103,6 +104,7 @@ export default function RoutesPage() {
     setRouteForm({
       name: r.name, description: r.description,
       source_comm_point_id: r.source_comm_point_id, dest_comm_point_id: r.dest_comm_point_id,
+      fan_out_cp_ids: (r as any).fan_out_cp_ids || [],
       source_topic: r.source_topic, destination_topic: r.destination_topic, is_active: r.is_active,
     });
     setEditingRouteId(r.route_id);
@@ -159,7 +161,7 @@ export default function RoutesPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-arteria-muted">Dest Comm Point</label>
+                    <label className="text-xs text-arteria-muted">Dest Comm Point (Primary)</label>
                     <select value={routeForm.dest_comm_point_id} onChange={(e) => setRouteForm({ ...routeForm, dest_comm_point_id: e.target.value })}
                       className="w-full mt-1 px-3 py-2 bg-arteria-bg border border-arteria-border rounded text-sm text-white">
                       <option value="">— Select —</option>
@@ -167,6 +169,27 @@ export default function RoutesPage() {
                         <option key={c.comm_point_id} value={c.comm_point_id}>{c.name}</option>
                       ))}
                     </select>
+                  </div>
+                </div>
+                {/* Fan-out: additional output CPs */}
+                <div>
+                  <label className="text-xs text-arteria-muted">Fan-Out (additional output CPs — message copies sent to all selected)</label>
+                  <div className="mt-1 space-y-1 max-h-32 overflow-y-auto bg-arteria-bg border border-arteria-border rounded p-2">
+                    {commPoints.filter(c => c.direction === 'OUTPUT' && c.comm_point_id !== routeForm.dest_comm_point_id).map(c => (
+                      <label key={c.comm_point_id} className="flex items-center gap-2 text-xs text-gray-300 hover:text-white cursor-pointer">
+                        <input type="checkbox" checked={routeForm.fan_out_cp_ids.includes(c.comm_point_id)}
+                          onChange={(e) => {
+                            const ids = e.target.checked
+                              ? [...routeForm.fan_out_cp_ids, c.comm_point_id]
+                              : routeForm.fan_out_cp_ids.filter(id => id !== c.comm_point_id);
+                            setRouteForm({ ...routeForm, fan_out_cp_ids: ids });
+                          }} className="rounded" />
+                        {c.name} <span className="text-gray-600 font-mono text-[9px]">{c.protocol} :{c.port}</span>
+                      </label>
+                    ))}
+                    {commPoints.filter(c => c.direction === 'OUTPUT' && c.comm_point_id !== routeForm.dest_comm_point_id).length === 0 && (
+                      <span className="text-gray-600 text-[10px]">No additional output CPs available</span>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">

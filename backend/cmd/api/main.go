@@ -548,21 +548,31 @@ func updateRoute(session *gocql.Session) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid ID"})
 		}
 		var p struct {
-			Name         string `json:"name"`
-			Description  string `json:"description"`
-			SourceCP     string `json:"source_comm_point_id"`
-			DestCP       string `json:"dest_comm_point_id"`
-			SourceTopic  string `json:"source_topic"`
-			DestTopic    string `json:"destination_topic"`
-			IsActive     bool   `json:"is_active"`
+			Name         string   `json:"name"`
+			Description  string   `json:"description"`
+			SourceCP     string   `json:"source_comm_point_id"`
+			DestCP       string   `json:"dest_comm_point_id"`
+			FanOutCPIDs  []string `json:"fan_out_cp_ids"`
+			SourceTopic  string   `json:"source_topic"`
+			DestTopic    string   `json:"destination_topic"`
+			IsActive     bool     `json:"is_active"`
 		}
 		if err := c.BodyParser(&p); err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
 		}
 		srcCP, _ := gocql.ParseUUID(p.SourceCP)
 		dstCP, _ := gocql.ParseUUID(p.DestCP)
-		session.Query(`UPDATE arteria.routes SET name=?, description=?, source_comm_point_id=?, dest_comm_point_id=?, source_topic=?, destination_topic=?, is_active=?, updated_at=? WHERE route_id=?`,
-			p.Name, p.Description, srcCP, dstCP, p.SourceTopic, p.DestTopic, p.IsActive, time.Now(), id).Exec()
+
+		// Parse fan-out CP IDs
+		var fanOutIDs []gocql.UUID
+		for _, idStr := range p.FanOutCPIDs {
+			if uid, err := gocql.ParseUUID(idStr); err == nil {
+				fanOutIDs = append(fanOutIDs, uid)
+			}
+		}
+
+		session.Query(`UPDATE arteria.routes SET name=?, description=?, source_comm_point_id=?, dest_comm_point_id=?, source_topic=?, destination_topic=?, is_active=?, fan_out_cp_ids=?, updated_at=? WHERE route_id=?`,
+			p.Name, p.Description, srcCP, dstCP, p.SourceTopic, p.DestTopic, p.IsActive, fanOutIDs, time.Now(), id).Exec()
 		return c.JSON(fiber.Map{"status": "updated"})
 	}
 }
