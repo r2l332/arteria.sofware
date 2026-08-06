@@ -313,6 +313,15 @@ func main() {
 		return c.JSON(fiber.Map{"audit_log": items, "count": len(items)})
 	})
 
+	// --- Patient Journey ---
+	api.Get("/patients/:id/journey", auth.RequirePermission(auth.PermMessageView), patientJourney(session))
+
+	// --- AI Filter Generator ---
+	api.Post("/ai/generate-filter", auth.RequirePermission(auth.PermRouteManage), generateFilter())
+
+	// --- Compliance Timeline ---
+	api.Get("/compliance/timeline", auth.RequirePermission(auth.PermMetricsView), complianceTimeline(session))
+
 	// --- WebSocket streaming + message control ---
 	js, _ := nc.JetStream()
 	wsHub := newWSHub()
