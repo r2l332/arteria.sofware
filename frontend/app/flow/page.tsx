@@ -110,10 +110,10 @@ export default function FlowPage() {
     col++;
   }
 
-  // Route node (below source, offset to show connection)
+  // Route node (below and left of filters)
   if (selectedRoute) {
-    const x = xOffset + (col - 0.3) * colWidth;
-    nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: procReceived, errors: procErrors, x, y: yMid + 80, data: selectedRoute });
+    const x = xOffset + 0.5 * colWidth;
+    nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: procReceived, errors: procErrors, x, y: yMid + 90, data: selectedRoute });
     if (srcCP) edges.push({ from: 'src', to: 'route' });
   }
 

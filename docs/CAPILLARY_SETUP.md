@@ -284,98 +284,82 @@ json.dump(envelope, sys.stdout)
 
 ---
 
-## Step 8: Set Up Applications on Your Site
+## Step 8: Connect Your Integration Engine
 
-You need something that:
-1. **Sends HL7** to `localhost:2575` (the agent's inbound port)
-2. **Listens on** `localhost:2576` for the processed results coming back
+The Capillary agent exposes two local ports on your machine:
+- **Port 2575** — Send HL7 messages INTO this port (your engine's outbound/output CP)
+- **Port 2576** — Receive processed results BACK on this port (your engine's inbound/input CP)
 
-### Option A: Demo VM App on Windows (native)
+### Rhapsody
 
-Build for Windows:
-```powershell
-cd demo\capillary-e2e\vm-app
-set GOOS=windows
-set GOARCH=amd64
-go build -o vm-app.exe .
-```
+1. **Sending (Output Communication Point):**
+   - Type: MLLP Client
+   - Host: `localhost`
+   - Port: `2575`
+   - Connection mode: Per-message or persistent
 
-Run it:
-```powershell
-set SEND_ADDR=localhost:2575
-set RECV_ADDR=:2576
-set WEB_PORT=8090
-.\vm-app.exe run
-```
+2. **Receiving (Input Communication Point):**
+   - Type: MLLP Server
+   - Port: `2576`
+   - This receives the transformed/extracted data back from Arteria
 
-Open http://localhost:8090 to see the dashboard with live sent/received counts and patient extracts.
+### Mirth Connect
 
-### Option B: Demo VM App in a Linux VM (e.g. WSL2 or Hyper-V)
+1. **Sending (Destination):**
+   - Connector Type: TCP Sender
+   - Host: `localhost`
+   - Port: `2575`
+   - Transmission Mode: MLLP
 
-If you're running the app inside WSL2 or a Hyper-V VM:
+2. **Receiving (Source):**
+   - Connector Type: TCP Listener
+   - Port: `2576`
+   - Transmission Mode: MLLP
 
-```bash
-cd demo/capillary-e2e/vm-app
-go build -o vm-app .
+### HAPI Test Panel / Any HL7 Tool
 
-# If Capillary agent is in Docker on the Windows host:
-SEND_ADDR=host.docker.internal:2575 RECV_ADDR=:2576 ./vm-app run
-
-# If Capillary agent is also inside this VM:
-SEND_ADDR=localhost:2575 RECV_ADDR=:2576 ./vm-app run
-```
-
-### Option C: Demo VM App in Docker (alongside the agent)
-
-```powershell
-cd demo\capillary-e2e\vm-app
-docker build -t vm-app .
-docker run -d --name vm-app ^
-  -p 8090:8090 -p 2576:2576 ^
-  -e SEND_ADDR=host.docker.internal:2575 ^
-  -e RECV_ADDR=:2576 ^
-  -e WEB_PORT=8090 ^
-  vm-app
-```
-
-> **Note:** `SEND_ADDR=host.docker.internal:2575` sends to the Capillary agent's mapped port on the Docker host.
-
-### Option D: Use any MLLP-capable application
-
-Any HL7 sender/receiver works:
-- **Mirth Connect** — configure an MLLP destination to `localhost:2575`
-- **HAPI Test Panel** — send test messages to port 2575
-- **Rhapsody** — point an output CP at `localhost:2575`
-
-For receiving, set up an MLLP input on port 2576.
+Point any MLLP sender at `localhost:2575`. Set up any MLLP listener on `localhost:2576`.
 
 ### Network Diagram (Windows + Docker)
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Windows Host                                           │
-│                                                         │
-│  ┌─────────────┐        ┌──────────────────────────┐   │
-│  │ Your App    │        │ Docker Desktop           │   │
-│  │ (or WSL VM) │        │                          │   │
-│  │             │        │  ┌────────────────────┐  │   │
-│  │ Sends HL7 ──┼───────►│  │ Capillary Agent    │  │   │
-│  │ to :2575    │        │  │ :2575 (inbound)    │  │   │
-│  │             │        │  │                    │  │   │
-│  │ Listens ◄───┼────────┼──│ forwards to        │  │   │
-│  │ on :2576    │        │  │ host.docker:2576   │  │   │
-│  │             │        │  └────────┬───────────┘  │   │
-│  │ Dashboard   │        │           │ mTLS tunnel  │   │
-│  │ :8090       │        │           ▼              │   │
-│  └─────────────┘        └───────────┼──────────────┘   │
-│                                     │                   │
-└─────────────────────────────────────┼───────────────────┘
-                                      │ Internet
-                                      ▼
-                          ┌───────────────────────┐
-                          │ arteria.software:9443 │
-                          │ (Tunnel Broker)       │
-                          └───────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Windows Host                                                │
+│                                                              │
+│  ┌──────────────────┐     ┌─────────────────────────────┐   │
+│  │ Rhapsody / Mirth │     │ Docker Desktop              │   │
+│  │                  │     │                             │   │
+│  │ Output CP ───────┼────►│  ┌───────────────────────┐  │   │
+│  │ (MLLP :2575)     │     │  │ Capillary Agent       │  │   │
+│  │                  │     │  │ listens :2575          │  │   │
+│  │ Input CP ◄───────┼─────┼──│ forwards to host:2576 │  │   │
+│  │ (MLLP :2576)     │     │  └───────────┬───────────┘  │   │
+│  │                  │     │              │ mTLS tunnel   │   │
+│  └──────────────────┘     └──────────────┼──────────────┘   │
+│                                          │                   │
+└──────────────────────────────────────────┼───────────────────┘
+                                           │ Internet
+                                           ▼
+                               ┌───────────────────────┐
+                               │ arteria.software:9443 │
+                               │ (Tunnel Broker)       │
+                               │                       │
+                               │ Ingestion → Process   │
+                               │ → Python Filters      │
+                               │ → Egress → Tunnel     │
+                               └───────────────────────┘
+```
+
+### Optional: Demo App for Quick Testing
+
+If you want to verify the Capillary is working before connecting your real engine:
+
+```powershell
+# Build the demo app (generates random HL7 + shows dashboard)
+cd demo\capillary-e2e\vm-app
+go build -o vm-app.exe .
+.\vm-app.exe run
+# Dashboard at http://localhost:8090
 ```
 
 ---
