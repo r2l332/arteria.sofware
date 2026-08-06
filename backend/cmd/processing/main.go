@@ -32,6 +32,7 @@ const (
 var log *logging.Logger
 var met *metrics.Counters
 var registry *plugin.Registry
+var nc *nats.Conn
 
 func main() {
 	var err error
@@ -54,7 +55,8 @@ func main() {
 	// Connect to NATS
 	natsCfg := natsutil.DefaultConfig()
 	natsCfg.URL = natsURL
-	nc, js, err := natsutil.Connect(natsCfg)
+	var js nats.JetStreamContext
+	nc, js, err = natsutil.Connect(natsCfg)
 	if err != nil {
 		log.Fatal("failed to connect to NATS", logging.Fields{"error": err.Error()})
 	}
@@ -179,6 +181,13 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	}
 	insertMessage(session, gocqlID, engEnvelope, "", "RECEIVED", now)
 
+	// Emit event for WebSocket streaming
+	nc.Publish("arteria.events.received", mustJSON(map[string]interface{}{
+		"message_id": msgID.String(), "message_type": parsed.MessageType,
+		"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
+		"sending_facility": parsed.SendingFacility, "size_bytes": len(m.Data), "status": "RECEIVED",
+	}))
+
 	// Run through the plugin registry
 	result := reg.Process(ctx, envelope)
 	if result.Err != nil {
@@ -204,6 +213,15 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		met.Errors.Add(1)
 		met.Rejected.Add(1)
 		met.DLQ.Add(1)
+
+		// Emit error event for WebSocket streaming
+		nc.Publish("arteria.events.error", mustJSON(map[string]interface{}{
+			"message_id": msgID.String(), "message_type": parsed.MessageType,
+			"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
+			"sending_facility": parsed.SendingFacility, "status": "ERROR",
+			"error": result.Err.Error(),
+		}))
+
 		m.Ack()
 		return
 	}
@@ -237,6 +255,15 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	m.Ack()
 	met.Processed.Add(1)
 	met.Routed.Add(1)
+
+	// Emit routed event for WebSocket streaming
+	nc.Publish("arteria.events.routed", mustJSON(map[string]interface{}{
+		"message_id": msgID.String(), "message_type": parsed.MessageType,
+		"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
+		"sending_facility": parsed.SendingFacility, "status": "ROUTED",
+		"route_name": destTopic, "size_bytes": len(transformedPayload),
+	}))
+
 	log.Info("message processed and routed", logging.Fields{
 		"message_id":    msgID.String(),
 		"message_type":  parsed.MessageType + "^" + parsed.TriggerEvent,
@@ -287,4 +314,9 @@ func parsePluginList(s string) map[string]bool {
 		}
 	}
 	return m
+}
+
+func mustJSON(v interface{}) []byte {
+	data, _ := json.Marshal(v)
+	return data
 }

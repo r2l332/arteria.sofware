@@ -313,6 +313,13 @@ func main() {
 		return c.JSON(fiber.Map{"audit_log": items, "count": len(items)})
 	})
 
+	// --- WebSocket streaming + message control ---
+	js, _ := nc.JetStream()
+	wsHub := newWSHub()
+	go wsHub.run()
+	startNATSBridge(nc, wsHub)
+	registerStreamingRoutes(app, nc, js, session, wsHub)
+
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

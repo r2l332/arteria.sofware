@@ -119,6 +119,61 @@ export const getMetrics = () =>
 export const getCPMetrics = () =>
   apiFetch<{ comm_points: Record<string, CPMetricSnapshot>; count: number }>('/metrics/comm-points');
 
+// --- Message Control ---
+export const dropMessage = (id: string, reason: string) =>
+  apiFetch<{ status: string }>(`/messages/${id}/drop`, { method: 'POST', body: JSON.stringify({ reason }) });
+
+export const retryMessage = (id: string) =>
+  apiFetch<{ status: string }>(`/messages/${id}/retry`, { method: 'POST' });
+
+export const holdMessage = (id: string) =>
+  apiFetch<{ status: string }>(`/messages/${id}/hold`, { method: 'POST' });
+
+export const releaseMessage = (id: string) =>
+  apiFetch<{ status: string }>(`/messages/${id}/release`, { method: 'POST' });
+
+export const flushRoute = (routeId: string, reason: string) =>
+  apiFetch<{ status: string }>(`/routes/${routeId}/flush`, { method: 'POST', body: JSON.stringify({ reason }) });
+
+// --- Message Trace ---
+export const getMessageTrace = (id: string) =>
+  apiFetch<{ message_id: string; status: string; steps: TraceStep[]; message: any }>(`/messages/${id}/trace`);
+
+// --- Filter Testing ---
+export const testFilter = (filterId: string, payload: string) =>
+  apiFetch<{ output?: string; error?: string }>(`/filters/${filterId}/test`, { method: 'POST', body: JSON.stringify({ payload }) });
+
+// --- Route Recent Messages ---
+export const getRouteRecent = (routeId: string, limit = 10) =>
+  apiFetch<{ messages: any[]; count: number }>(`/routes/${routeId}/recent?limit=${limit}`);
+
+// --- WebSocket ---
+export function connectFlowWebSocket(onMessage: (event: StreamEvent) => void): WebSocket | null {
+  if (typeof window === 'undefined') return null;
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${window.location.host}/ws/flow`);
+  ws.onmessage = (e) => {
+    try { onMessage(JSON.parse(e.data)); } catch {}
+  };
+  return ws;
+}
+
+export interface StreamEvent {
+  type: 'message' | 'error' | 'metric' | 'trace' | 'event';
+  timestamp: string;
+  data: any;
+}
+
+export interface TraceStep {
+  stage: string;
+  timestamp: string;
+  component: string;
+  input?: string;
+  output?: string;
+  duration_ms: number;
+  error?: string;
+}
+
 export const getCPLogs = (id: string) =>
   apiFetch<CPLogResponse>(`/metrics/comm-points/${id}/logs`);
 
