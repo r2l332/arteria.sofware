@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -484,5 +483,105 @@ func publishPipelineEvent(nc *nats.Conn, stage string, event MessageEvent) {
 	nc.Publish("arteria.events."+stage, data)
 }
 
-// Unused context import guard
-var _ = context.Background
+// --- Rewire API: drag-and-drop route/filter reassignment ---
+
+func registerRewireRoutes(app *fiber.App, session *gocql.Session) {
+	api := app.Group("/api/v1")
+
+	// Quick rewire: change source or dest CP on a route
+	api.Patch("/routes/:id/rewire", func(c *fiber.Ctx) error {
+		id, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid ID"})
+		}
+		var body struct {
+			SourceCP *string `json:"source_comm_point_id"`
+			DestCP   *string `json:"dest_comm_point_id"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		now := time.Now()
+		if body.SourceCP != nil {
+			cpID, _ := gocql.ParseUUID(*body.SourceCP)
+			session.Query(`UPDATE arteria.routes SET source_comm_point_id = ?, updated_at = ? WHERE route_id = ?`, cpID, now, id).Exec()
+		}
+		if body.DestCP != nil {
+			cpID, _ := gocql.ParseUUID(*body.DestCP)
+			session.Query(`UPDATE arteria.routes SET dest_comm_point_id = ?, updated_at = ? WHERE route_id = ?`, cpID, now, id).Exec()
+		}
+
+		return c.JSON(fiber.Map{"status": "rewired"})
+	})
+
+	// Reorder filters within a route
+	api.Put("/routes/:id/filters/reorder", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var body struct {
+			Order []struct {
+				FilterID string `json:"filter_id"`
+				Position int    `json:"position"`
+			} `json:"order"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		for _, item := range body.Order {
+			fID, _ := gocql.ParseUUID(item.FilterID)
+			// Delete old entry and re-insert with new order (CQL partition key includes execution_order)
+			var name, filterType, script, configJSON string
+			var isActive bool
+			session.Query(`SELECT name, filter_type, js_script, config_json, is_active FROM arteria.filters_by_id WHERE filter_id = ?`, fID).
+				Scan(&name, &filterType, &script, &configJSON, &isActive)
+			if name == "" {
+				continue
+			}
+			// Update the execution_order in filters table (delete + re-insert since it's part of PK)
+			session.Query(`DELETE FROM arteria.filters WHERE route_id = ? AND execution_order = ?`, routeID, item.Position).Exec()
+			session.Query(`INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				fID, routeID, name, filterType, item.Position, script, configJSON, isActive, time.Now()).Exec()
+		}
+
+		return c.JSON(fiber.Map{"status": "reordered"})
+	})
+
+	// Move a filter from one route to another
+	api.Post("/filters/:id/move", func(c *fiber.Ctx) error {
+		filterID, _ := gocql.ParseUUID(c.Params("id"))
+		var body struct {
+			FromRouteID string `json:"from_route_id"`
+			ToRouteID   string `json:"to_route_id"`
+			Position    int    `json:"position"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		fromRoute, _ := gocql.ParseUUID(body.FromRouteID)
+		toRoute, _ := gocql.ParseUUID(body.ToRouteID)
+
+		// Read filter data
+		var name, filterType, script, configJSON string
+		var isActive bool
+		var oldOrder int
+		session.Query(`SELECT name, filter_type, execution_order, js_script, config_json, is_active FROM arteria.filters_by_id WHERE filter_id = ?`, filterID).
+			Scan(&name, &filterType, &oldOrder, &script, &configJSON, &isActive)
+		if name == "" {
+			return c.Status(404).JSON(fiber.Map{"error": "filter not found"})
+		}
+
+		// Delete from old route
+		session.Query(`DELETE FROM arteria.filters WHERE route_id = ? AND execution_order = ?`, fromRoute, oldOrder).Exec()
+
+		// Insert into new route
+		session.Query(`INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			filterID, toRoute, name, filterType, body.Position, script, configJSON, isActive, time.Now()).Exec()
+
+		return c.JSON(fiber.Map{"status": "moved"})
+	})
+}

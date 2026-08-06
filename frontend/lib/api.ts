@@ -147,6 +147,16 @@ export const testFilter = (filterId: string, payload: string) =>
 export const getRouteRecent = (routeId: string, limit = 10) =>
   apiFetch<{ messages: any[]; count: number }>(`/routes/${routeId}/recent?limit=${limit}`);
 
+// --- Rewire (drag-to-rewire) ---
+export const rewireRoute = (routeId: string, data: { source_comm_point_id?: string; dest_comm_point_id?: string }) =>
+  apiFetch<{ status: string }>(`/routes/${routeId}/rewire`, { method: 'PATCH', body: JSON.stringify(data) });
+
+export const reorderFilters = (routeId: string, order: { filter_id: string; position: number }[]) =>
+  apiFetch<{ status: string }>(`/routes/${routeId}/filters/reorder`, { method: 'PUT', body: JSON.stringify({ order }) });
+
+export const moveFilter = (filterId: string, fromRouteId: string, toRouteId: string, position: number) =>
+  apiFetch<{ status: string }>(`/filters/${filterId}/move`, { method: 'POST', body: JSON.stringify({ from_route_id: fromRouteId, to_route_id: toRouteId, position }) });
+
 // --- WebSocket ---
 export function connectFlowWebSocket(onMessage: (event: StreamEvent) => void): WebSocket | null {
   if (typeof window === 'undefined') return null;

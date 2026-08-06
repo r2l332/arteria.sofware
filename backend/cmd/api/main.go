@@ -319,6 +319,7 @@ func main() {
 	go wsHub.run()
 	startNATSBridge(nc, wsHub)
 	registerStreamingRoutes(app, nc, js, session, wsHub)
+	registerRewireRoutes(app, session)
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
