@@ -193,8 +193,8 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 		return destTopic, destCPIDs, result.Output.RawPayload, nil
 	}
 
-	outputBytes, _ := json.Marshal(result.Output)
-	return destTopic, destCPIDs, string(outputBytes), nil
+	// Filters ran — deliver the rawPayload (which filters update), not the full envelope
+	return destTopic, destCPIDs, result.Output.RawPayload, nil
 }
 
 // executeFilterChain runs all active filters for a route in order.
@@ -442,8 +442,12 @@ func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelo
 	// Serialize the message envelope as JSON input
 	inputBytes, _ := json.Marshal(envelope)
 
-	// Create the command with timeout
-	execCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	// Create the command with timeout (dotnet needs longer for JIT warmup)
+	timeout := 2 * time.Second
+	if filter.FilterType == "dotnet" {
+		timeout = 10 * time.Second
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	proc := exec.CommandContext(execCtx, cmd, args...)
@@ -457,7 +461,7 @@ func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelo
 	// Execute
 	if err := proc.Run(); err != nil {
 		if execCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("%s script timeout (500ms limit)", filter.FilterType)
+			return nil, fmt.Errorf("%s script timeout (%v limit)", filter.FilterType, timeout)
 		}
 		return nil, fmt.Errorf("%s script error: %v (stderr: %s)", filter.FilterType, err, stderr.String())
 	}
