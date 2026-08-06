@@ -58,7 +58,7 @@ export default function FlowPage() {
     getRouteRecent(selectedRouteId, 8).then(r => setRecentMsgs(r.messages || [])).catch(() => {});
   }, [selectedRouteId]);
 
-  // WebSocket — real-time push, no polling
+  // WebSocket for real-time push + HTTP polling fallback
   useEffect(() => {
     const ws = connectFlowWebSocket((event: StreamEvent) => {
       if (event.type === 'message' || event.type === 'error') {
@@ -71,7 +71,6 @@ export default function FlowPage() {
       }
       if (event.type === 'metric') {
         setMetrics(event.data);
-        // Seed counters from processing metrics on first load
         if (event.data.received && counts.current.received === 0) {
           counts.current.received = event.data.received;
           counts.current.routed = event.data.routed || 0;
@@ -80,7 +79,22 @@ export default function FlowPage() {
       }
     });
     wsRef.current = ws;
-    return () => { ws?.close(); };
+
+    // HTTP polling fallback (in case WebSocket doesn't connect through proxy)
+    const { getMetrics } = require('@/lib/api');
+    const poll = setInterval(() => {
+      getMetrics().then((m: any) => {
+        if (m) {
+          setMetrics(m.processing || m);
+          if (m.processing?.received) {
+            counts.current.received = m.processing.received;
+            counts.current.routed = m.processing.routed || 0;
+            counts.current.errors = m.processing.errors || 0;
+          }
+        }
+      }).catch(() => {});
+    }, 3000);
+    return () => { ws?.close(); clearInterval(poll); };
   }, []);
 
   const openTrace = async (msgId: string) => {

@@ -9,7 +9,16 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 go build -o /processing ./cmd/processing
 
+FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim AS dotnet-tools
+RUN dotnet tool install -g dotnet-script
+ENV PATH="${PATH}:/root/.dotnet/tools"
+
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 jq && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 jq libicu72 libssl3 && rm -rf /var/lib/apt/lists/*
+COPY --from=dotnet-tools /usr/share/dotnet /usr/share/dotnet
+COPY --from=dotnet-tools /root/.dotnet/tools /root/.dotnet/tools
+RUN ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
+ENV PATH="${PATH}:/root/.dotnet/tools"
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 COPY --from=builder /processing /usr/local/bin/processing
 ENTRYPOINT ["processing"]
