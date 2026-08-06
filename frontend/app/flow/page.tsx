@@ -152,14 +152,40 @@ export default function FlowPage() {
                 </g>;
               })}
             </svg>
-            {/* Nodes — glassmorphic cards */}
-            {nodes.map(n => (
+            {/* Nodes — glassmorphic cards with drop zones */}
+            {nodes.map((n, idx) => (
               <div key={n.id}
-                draggable
-                onDragStart={() => setDraggedNode(n.id)}
+                draggable={n.type === 'filter'}
+                onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ id: n.id, type: n.type, index: idx, filterId: n.data?.filter_id })); setDraggedNode(n.id); }}
                 onDragEnd={() => setDraggedNode(null)}
-                className={clsx('absolute w-[160px] rounded-xl border p-3 cursor-grab active:cursor-grabbing backdrop-blur-xl bg-slate-900/80 shadow-2xl transition-all duration-200 hover:scale-[1.04]',
-                  draggedNode === n.id ? 'ring-2 ring-cyan-400 opacity-70' : 'border-slate-800',
+                onDragOver={(e) => { if (n.type === 'filter' || n.type === 'source' || n.type === 'destination') e.preventDefault(); }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  try {
+                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                    if (data.type === 'filter' && n.type === 'filter' && data.id !== n.id) {
+                      // Reorder: swap positions
+                      const newOrder = filters.map((f, i) => ({ filter_id: f.filter_id, position: i }));
+                      const fromIdx = newOrder.findIndex(o => o.filter_id === data.filterId);
+                      const toIdx = newOrder.findIndex(o => o.filter_id === n.data?.filter_id);
+                      if (fromIdx >= 0 && toIdx >= 0) {
+                        const [moved] = newOrder.splice(fromIdx, 1);
+                        newOrder.splice(toIdx, 0, moved);
+                        const reordered = newOrder.map((o, i) => ({ ...o, position: i }));
+                        const { reorderFilters } = await import('@/lib/api');
+                        await reorderFilters(selectedRouteId, reordered);
+                        // Reload filters
+                        const resp = await getFilters(selectedRouteId);
+                        setFilters((resp.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
+                      }
+                    }
+                  } catch {}
+                  setDraggedNode(null);
+                }}
+                className={clsx('absolute w-[160px] rounded-xl border p-3 transition-all duration-200 hover:scale-[1.04] backdrop-blur-xl bg-slate-900/80 shadow-2xl',
+                  n.type === 'filter' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
+                  draggedNode === n.id ? 'ring-2 ring-cyan-400 opacity-60 scale-105' : 'border-slate-800',
+                  draggedNode && draggedNode !== n.id && n.type === 'filter' ? 'ring-1 ring-dashed ring-cyan-500/30' : '',
                   !n.active && 'opacity-40 grayscale')}
                 style={{ left: n.x, top: n.y }}
               >
@@ -171,7 +197,7 @@ export default function FlowPage() {
                     <div className="text-[10px] font-semibold text-white truncate">{n.label}</div>
                     <div className="text-[8px] text-gray-500 font-mono truncate">{n.sublabel}</div>
                   </div>
-                  <GripVertical className="w-3 h-3 text-gray-600" />
+                  {n.type === 'filter' && <GripVertical className="w-3 h-3 text-gray-600" />}
                 </div>
                 <div className="flex items-center justify-between">
                   <div className={clsx('text-center flex-1 py-1 rounded-lg', getBg(n.type))}>
