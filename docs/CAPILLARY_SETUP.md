@@ -87,23 +87,14 @@ ssh user@your-server "chmod +x /opt/arteria/bin/capillary"
 
 ## Step 3: Create a Tunnel Node in Arteria
 
-In the Arteria dashboard (https://arteria.software) go to **Aorta Mesh** and click **Add Node**.
-
-- **Name:** e.g. `darren-lab`
-- **Site Name:** e.g. `Darren's Lab`
-
-This generates an **enrollment token**. Copy it — you'll need it in the next step.
-
-Or via the API:
-
-```bash
-curl -X POST https://arteria.software/api/v1/tunnel/nodes \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "darren-lab", "site_name": "Darren Lab"}'
-```
-
-The response includes `node_id` and `enrollment_token`.
+1. Open https://arteria.software and log in
+2. Go to **Aorta Mesh** in the left sidebar
+3. Click **Add Node**
+4. Fill in:
+   - **Name:** `darren-lab`
+   - **Site Name:** `Darren's Lab`
+5. Click **Create**
+6. Copy the **enrollment token** shown — you'll need it next
 
 ---
 
@@ -168,9 +159,12 @@ sudo journalctl -u arteria-capillary -f
 
 ## Step 6: Create Communication Points
 
-In the Arteria dashboard go to **Comm Points** and create:
+1. Go to **Comm Points** in the left sidebar
+2. Click **Add Communication Point**
 
-### Input CP (receives from your site)
+### Create the Input CP
+
+Fill in the form:
 
 | Field | Value |
 |-------|-------|
@@ -178,11 +172,15 @@ In the Arteria dashboard go to **Comm Points** and create:
 | Direction | `INPUT` |
 | Protocol | `MLLP` |
 | Port | `2575` |
-| Tunnel Enabled | ✓ |
-| Tunnel Node | `darren-lab` |
+| Tunnel Enabled | ✓ (toggle on) |
+| Tunnel Node | Select `darren-lab` from dropdown |
 | Tunnel Local Port | `2575` |
 
-### Output CP (sends back to your site)
+Click **Save**.
+
+### Create the Output CP
+
+Click **Add Communication Point** again:
 
 | Field | Value |
 |-------|-------|
@@ -190,43 +188,47 @@ In the Arteria dashboard go to **Comm Points** and create:
 | Direction | `OUTPUT` |
 | Protocol | `MLLP` |
 | Port | `2576` |
-| Tunnel Enabled | ✓ |
-| Tunnel Node | `darren-lab` |
+| Tunnel Enabled | ✓ (toggle on) |
+| Tunnel Node | Select `darren-lab` from dropdown |
 | Tunnel Local Port | `2576` |
 
-After saving, push the config to the agent:
-- Go to **Aorta Mesh** → click your node → **Push Config**
+Click **Save**.
 
-The agent will start listening on `:2575` and forwarding outbound traffic to `:2576`.
+### Push Config to the Agent
+
+1. Go to **Aorta Mesh** in the sidebar
+2. Click on your node (`darren-lab`)
+3. Click **Push Config**
+4. The agent will now start listening on `:2575` and forwarding outbound traffic to `:2576`
 
 ---
 
 ## Step 7: Create a Route with Filters
 
-Go to **Routes & Filters** → **New Route**:
+1. Go to **Routes & Filters** in the left sidebar
+2. Click **New Route**
+3. Fill in:
 
 | Field | Value |
 |-------|-------|
 | Name | `Darren Lab Round-Trip` |
-| Source CP | `Darren Lab Input` |
-| Destination CP | `Darren Lab Output` |
-| Source Topic | `ADT^A04` (or `*` for all) |
+| Source CP | Select `Darren Lab Input` |
+| Destination CP | Select `Darren Lab Output` |
+| Source Topic | `ADT^A04` (or `*` for all message types) |
 | Destination Topic | `darren.output` |
 | Active | ✓ |
 
-### Add Filters
+4. Click **Save**
 
-Click the route, then **Add Filter**:
+### Add Filter 1: HL7 to JSON
 
-**Filter 1: HL7 to JSON (Python)**
-
-| Field | Value |
-|-------|-------|
-| Name | `HL7 to JSON` |
-| Type | `python` |
-| Order | `1` |
-
-Script:
+1. Click on your new route in the list
+2. Click **Add Filter**
+3. Fill in:
+   - **Name:** `HL7 to JSON`
+   - **Type:** Select `python`
+   - **Order:** `1`
+4. Paste this script into the editor:
 ```python
 import sys, json
 
@@ -251,15 +253,16 @@ envelope["properties"]["transform"] = "hl7_to_json"
 json.dump(envelope, sys.stdout)
 ```
 
-**Filter 2: Extract Patient (Python)**
+5. Click **Save Filter**
 
-| Field | Value |
-|-------|-------|
-| Name | `Extract Patient` |
-| Type | `python` |
-| Order | `2` |
+### Add Filter 2: Extract Patient
 
-Script:
+1. Click **Add Filter** again
+2. Fill in:
+   - **Name:** `Extract Patient`
+   - **Type:** Select `python`
+   - **Order:** `2`
+3. Paste this script into the editor:
 ```python
 import sys, json
 
@@ -281,6 +284,10 @@ envelope["rawPayload"] = json.dumps({"patient_id": patient_id, "patient_name": p
 envelope["properties"] = {"patient_id": patient_id, "patient_name": patient_name, "transform": "extract"}
 json.dump(envelope, sys.stdout)
 ```
+
+4. Click **Save Filter**
+
+Your route is now configured: messages matching `ADT^A04` will flow through both Python filters before being delivered back to your site.
 
 ---
 
