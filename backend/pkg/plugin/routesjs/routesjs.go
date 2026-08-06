@@ -66,14 +66,14 @@ func (p *Plugin) Process(ctx context.Context, envelope *plugin.MessageEnvelope) 
 		Properties:      envelope.Properties,
 	}
 
-	destTopic, destCPID, transformed, err := p.eng.ProcessMessage(ctx, engEnvelope)
+	destTopic, destCPIDs, transformed, err := p.eng.ProcessMessage(ctx, engEnvelope)
 	if err != nil {
 		return plugin.ProcessResult{Err: err}, false
 	}
 
 	return plugin.ProcessResult{
 		DestinationTopic:   destTopic,
-		DestCommPointID:    destCPID,
+		DestCommPointIDs:   destCPIDs,
 		TransformedPayload: transformed,
 	}, false
 }

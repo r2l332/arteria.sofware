@@ -52,6 +52,7 @@ type Route struct {
 	Name             string
 	SourceCommPoint  gocql.UUID
 	DestCommPoint    gocql.UUID
+	FanOutCPIDs      []gocql.UUID
 	SourceTopic      string
 	DestinationTopic string
 	IsActive         bool
@@ -132,8 +133,8 @@ func (e *Engine) StartConfigReloader(ctx context.Context, interval time.Duration
 }
 
 // ProcessMessage runs a message through the matching route's filter chain.
-// Returns: destination topic, dest comm point ID, transformed payload, error
-func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, string, string, error) {
+// Returns: destination topic, dest comm point IDs (primary + fan-out), transformed payload, error
+func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, []string, string, error) {
 	e.routesMu.RLock()
 	routes := e.routes
 	e.routesMu.RUnlock()
@@ -163,19 +164,23 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 	if matchedRoute == nil {
 		// No route matched, pass through
 		payloadBytes, _ := json.Marshal(envelope)
-		return "default", "", string(payloadBytes), nil
+		return "default", nil, string(payloadBytes), nil
 	}
 
-	destCPID := matchedRoute.DestCommPoint.String()
+	// Collect all destination CP IDs (primary + fan-out)
+	destCPIDs := []string{matchedRoute.DestCommPoint.String()}
+	for _, cpID := range matchedRoute.FanOutCPIDs {
+		destCPIDs = append(destCPIDs, cpID.String())
+	}
 
 	// Execute filter chain
 	result, err := e.executeFilterChain(ctx, matchedRoute, envelope)
 	if err != nil {
-		return "", "", "", fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
+		return "", nil, "", fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
 	}
 
 	if result.Action == "reject" {
-		return "", "", "", fmt.Errorf("message rejected by filter: %s", result.Reason)
+		return "", nil, "", fmt.Errorf("message rejected by filter: %s", result.Reason)
 	}
 
 	destTopic := matchedRoute.DestinationTopic
@@ -185,11 +190,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 
 	// If no filters modified the message, pass through the raw payload unchanged
 	if len(matchedRoute.Filters) == 0 || !hasActiveFilters(matchedRoute.Filters) {
-		return destTopic, destCPID, result.Output.RawPayload, nil
+		return destTopic, destCPIDs, result.Output.RawPayload, nil
 	}
 
 	outputBytes, _ := json.Marshal(result.Output)
-	return destTopic, destCPID, string(outputBytes), nil
+	return destTopic, destCPIDs, string(outputBytes), nil
 }
 
 // executeFilterChain runs all active filters for a route in order.
@@ -344,11 +349,12 @@ func hasActiveFilters(filters []Filter) bool {
 
 func (e *Engine) loadRoutes() ([]Route, error) {
 	var routes []Route
-	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active FROM arteria.routes`).Iter()
+	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, fan_out_cp_ids FROM arteria.routes`).Iter()
 
 	var r Route
-	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive) {
+	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive, &r.FanOutCPIDs) {
 		routes = append(routes, r)
+		r = Route{}
 	}
 	return routes, iter.Close()
 }

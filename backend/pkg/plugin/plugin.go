@@ -24,7 +24,7 @@ type MessageEnvelope struct {
 // ProcessResult is returned by a processor plugin after handling a message.
 type ProcessResult struct {
 	DestinationTopic   string
-	DestCommPointID    string // Specific output CP to deliver to
+	DestCommPointIDs   []string // All destination CPs (primary + fan-out)
 	TransformedPayload string
 	Err                error
 }

@@ -228,7 +228,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 
 	destTopic := result.DestinationTopic
 	transformedPayload := result.TransformedPayload
-	destCPID := result.DestCommPointID
+	destCPIDs := result.DestCommPointIDs
 
 	updateMessageTransformed(session, gocqlID, transformedPayload, "ROUTED", now)
 
@@ -243,9 +243,9 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	routeSubject := subjectRoute + "." + destTopic
 	msg := nats.NewMsg(routeSubject)
 	msg.Data = []byte(transformedPayload)
-	if destCPID != "" {
+	if len(destCPIDs) > 0 {
 		msg.Header = nats.Header{}
-		msg.Header.Set("X-Dest-CP", destCPID)
+		msg.Header.Set("X-Dest-CP", strings.Join(destCPIDs, ","))
 	}
 	_, err = js.PublishMsg(msg, nats.MsgId(msgID.String()))
 	if err != nil {
