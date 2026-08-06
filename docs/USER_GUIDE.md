@@ -141,6 +141,62 @@ When editing a filter, the Monaco code editor appears with:
 - **Active** checkbox — enable/disable this filter step
 - **Cancel** and **Save Filter** buttons
 
+**Filter Types:**
+
+| Type | Entry Point | Description |
+|------|------------|-------------|
+| `javascript` | `transform(msg)` in V8 | Modify message and return it. Native V8 speed (~1ms). 50ms timeout. |
+| `conditional` | `evaluate(msg)` in V8 | Return routing decisions. 50ms timeout. |
+| `lookup` | — | Enriches message from a lookup table (configured via `config_json`) |
+| `python` | Script via stdin/stdout | Full Python3 — reads envelope JSON from stdin, writes modified envelope to stdout. 2s timeout. |
+| `bash` | Script via stdin/stdout | Bash script — same stdin/stdout contract. 2s timeout. |
+| `dotnet` | `dotnet-script eval` | C# via dotnet-script — same stdin/stdout contract. 10s timeout (JIT cold-start). |
+| `connector` | — | Makes an outbound HTTP or MLLP call mid-chain and stores the response in message properties. |
+
+**Writing a Python Filter:**
+
+```python
+import sys, json
+
+envelope = json.loads(sys.stdin.read())
+# Modify the envelope
+envelope["properties"]["processed_by"] = "python"
+# Write back to stdout
+json.dump(envelope, sys.stdout)
+```
+
+**Writing a .NET/C# Filter:**
+
+```csharp
+using System;
+using System.Text.Json;
+
+var input = Console.In.ReadToEnd();
+var doc = JsonDocument.Parse(input);
+// ... modify and output
+Console.Write(modifiedJson);
+```
+
+**Connector Filter (mid-chain outbound call):**
+
+A connector filter makes an HTTP or MLLP call during processing and stores the response in message properties. Configure via `config_json`:
+
+```json
+{
+  "connector_type": "HTTP",
+  "url": "https://api.example.com/lookup",
+  "method": "POST",
+  "headers": {"Authorization": "Bearer token"},
+  "timeout_ms": 5000,
+  "response_property": "api_response",
+  "response_status_property": "api_status"
+}
+```
+
+After the connector runs, subsequent filters can read `msg.properties.api_response` and `msg.properties.api_status`.
+
+For MLLP connectors, the ACK code (AA/AE/AR) is automatically extracted from the MSA segment and stored in the status property.
+
 **Writing a JavaScript Transform:**
 
 The `transform(msg)` function receives the message object and must return it:
@@ -195,7 +251,49 @@ function evaluate(msg) {
 
 Filters run sequentially by `execution_order`. If a conditional filter rejects, the chain stops and the message goes to the error queue. If it passes, the next filter runs. JS transforms modify the message in place for subsequent filters.
 
-**Timeout:** Each filter has a 50ms execution limit. If your script takes longer, the message is rejected with a timeout error.
+**Timeout:** JavaScript filters have a 50ms execution limit. Python/bash filters have a 2s limit. .NET filters have a 10s limit (for JIT cold-start). If a script takes longer, the message is rejected with a timeout error.
+
+### Route Properties
+
+Routes can have **default properties** — key-value pairs that are injected into every message before the filter chain runs. Use the API to set them:
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/routes/<route-id>/properties \
+  -H 'Content-Type: application/json' \
+  -d '{"properties": {"environment": "production", "source_system": "hospital_a"}}'
+```
+
+Filters can then read these via `msg.properties.environment`, modify them, or add new ones. Properties persist through the entire filter chain and are stored in the database for audit.
+
+### Route Chaining
+
+Routes can be chained so that after one route's filter chain completes, the message is forwarded to another route's filter chain. This enables complex multi-stage processing:
+
+**Example scenario:** HL7 received → call HTTP API for enrichment → enrich the HL7 → send to MLLP endpoint → check the ACK → if failed, route to email CP.
+
+Set up chaining via the API:
+```bash
+curl -X PUT http://localhost:8080/api/v1/routes/<route-id>/chain \
+  -H 'Content-Type: application/json' \
+  -d '{"next_route_id": "<next-route-uuid>"}'
+```
+
+Maximum chain depth is 10 to prevent infinite loops.
+
+### Fan-Out
+
+A route can deliver messages to multiple output CPs simultaneously:
+
+1. **Simple fan-out**: Set `fan_out_cp_ids` on the route to add additional output CPs. Every message goes to all of them plus the primary destination.
+
+2. **Conditional fan-out**: Configure per-CP condition scripts that evaluate whether each CP should receive the message. For example, send lab orders to radiology only if the message contains a radiology order code.
+
+Configure via the API:
+```bash
+curl -X PUT http://localhost:8080/api/v1/routes/<route-id>/fan-out \
+  -H 'Content-Type: application/json' \
+  -d '{"entries": [{"cp_id": "uuid", "name": "Radiology", "condition_type": "python", "condition": "import sys,json; e=json.loads(sys.stdin.read()); print(\"true\" if \"RAD\" in e[\"rawPayload\"] else \"false\")"}]}'
+```
 
 ---
 
@@ -275,7 +373,58 @@ When no errors exist, the page shows: "No errors — all systems operational"
 
 ---
 
-## 6. Common Workflows
+## 6. Message Flow (Live Visualization)
+
+**URL:** `/flow`
+
+The Message Flow page provides a real-time visual representation of messages flowing through the pipeline.
+
+### Features
+
+- **Route selector** — pick a route to focus on, or view all routes
+- **Live stream panel** — messages appear as they flow through in real-time via WebSocket
+- **Visual pipeline** — glassmorphic cards showing Input CP → Route → Filters → Output CP(s), connected by animated bezier edges
+- **Live counters** — received, routed, delivered, and error counts update in real-time
+- **Trace panel** — click any message to see its full journey through the pipeline
+- **Filter test panel** — test filter scripts against live message payloads
+
+The page connects via WebSocket (`/ws/flow`) with an HTTP polling fallback (every 3s).
+
+---
+
+## 7. Message Control
+
+From the Messages page or via the API, you can control individual messages:
+
+| Action | Effect |
+|--------|--------|
+| **Drop** | Mark message as DROPPED, remove from delivery queue |
+| **Retry** | Re-inject a failed message back into ingestion |
+| **Hold** | Pause delivery, mark as HELD |
+| **Release** | Release a held message back into processing |
+| **Flush** | Purge all queued messages for a route |
+
+---
+
+## 8. Patient Journey
+
+**URL:** `/patient-journey`
+
+Search by MRN (Medical Record Number) to see a timeline of all messages for a patient. Events are color-coded by message type and displayed chronologically.
+
+---
+
+## 9. AI Filter Generator
+
+**URL:** `/ai-filters`
+
+Describe what you want a filter to do in plain English, and Arteria generates the filter code (Python or JavaScript). Includes a Monaco editor to review and modify the generated code before saving.
+
+**Example:** "reject messages without a patient ID" → generates a conditional filter script.
+
+---
+
+## 10. Common Workflows
 
 ### Setting Up a New Integration
 
@@ -395,11 +544,15 @@ When writing JavaScript filters, the message object has these fields:
 ```
 
 **Rules:**
-- `transform(msg)` must return the modified message object
-- `evaluate(msg)` must return `{ action: "pass" }`, `{ action: "reject", reason: "..." }`, or `{ action: "route_to", route_to: "..." }`
-- Scripts have a 50ms execution timeout
-- Scripts cannot access the network, filesystem, or external APIs
-- Properties are string key-value pairs only
+- `transform(msg)` must return the modified message object (JavaScript V8 filters)
+- `evaluate(msg)` must return `{ action: "pass" }`, `{ action: "reject", reason: "..." }`, or `{ action: "route_to", route_to: "..." }` (JavaScript V8 conditional filters)
+- Python/bash/dotnet filters read the envelope JSON from stdin and write modified JSON to stdout
+- Connector filters make outbound HTTP/MLLP calls and store responses in properties
+- JavaScript filters have a 50ms timeout; Python/bash have 2s; dotnet has 10s
+- JavaScript V8 filters cannot access the network, filesystem, or external APIs
+- Python/bash/dotnet filters run as subprocesses with full system access (within the container)
+- Properties are string key-value pairs that persist through the entire filter chain
+- Route default properties are injected before the first filter runs
 
 ---
 

@@ -25,7 +25,8 @@ type MessageEnvelope struct {
 type ProcessResult struct {
 	DestinationTopic   string
 	DestCommPointIDs   []string // All destination CPs (primary + fan-out)
-	TransformedPayload string
+	TransformedPayload string   // rawPayload content for wire delivery
+	Envelope           *MessageEnvelope // Full envelope for DB audit trail
 	Err                error
 }
 

@@ -605,4 +605,123 @@ func registerRewireRoutes(app *fiber.App, session *gocql.Session) {
 
 		return c.JSON(fiber.Map{"status": "moved"})
 	})
+
+	// Configure conditional fan-out on a route
+	api.Put("/routes/:id/fan-out", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var body struct {
+			Entries []struct {
+				CPID          string `json:"cp_id"`
+				Name          string `json:"name"`
+				ConditionType string `json:"condition_type"` // "python", "javascript", "bash", "dotnet", "" (unconditional)
+				Condition     string `json:"condition"`      // Script: reads envelope JSON from stdin, prints "true"/"false"
+			} `json:"entries"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+
+		configJSON, _ := json.Marshal(body.Entries)
+		session.Query(`UPDATE arteria.routes SET fan_out_config = ?, updated_at = ? WHERE route_id = ?`,
+			string(configJSON), time.Now(), routeID).Exec()
+
+		return c.JSON(fiber.Map{"status": "configured", "entries": len(body.Entries)})
+	})
+
+	// Get conditional fan-out config for a route
+	api.Get("/routes/:id/fan-out", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var configRaw string
+		session.Query(`SELECT fan_out_config FROM arteria.routes WHERE route_id = ?`, routeID).Scan(&configRaw)
+		var entries []interface{}
+		if configRaw != "" {
+			json.Unmarshal([]byte(configRaw), &entries)
+		}
+		return c.JSON(fiber.Map{"entries": entries, "count": len(entries)})
+	})
+
+	// Set default properties on a route (injected into every message before the filter chain)
+	api.Put("/routes/:id/properties", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var body struct {
+			Properties map[string]string `json:"properties"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		propsJSON, _ := json.Marshal(body.Properties)
+		session.Query(`UPDATE arteria.routes SET default_properties = ?, updated_at = ? WHERE route_id = ?`,
+			string(propsJSON), time.Now(), routeID).Exec()
+		return c.JSON(fiber.Map{"status": "updated", "properties": body.Properties})
+	})
+
+	// Get default properties for a route
+	api.Get("/routes/:id/properties", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var propsRaw string
+		session.Query(`SELECT default_properties FROM arteria.routes WHERE route_id = ?`, routeID).Scan(&propsRaw)
+		var props map[string]string
+		if propsRaw != "" {
+			json.Unmarshal([]byte(propsRaw), &props)
+		}
+		return c.JSON(fiber.Map{"properties": props})
+	})
+
+	// Set the next route in a chain (route chaining)
+	api.Put("/routes/:id/chain", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var body struct {
+			NextRouteID *string `json:"next_route_id"` // null to clear
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid body"})
+		}
+		now := time.Now()
+		if body.NextRouteID == nil || *body.NextRouteID == "" {
+			session.Query(`UPDATE arteria.routes SET next_route_id = null, updated_at = ? WHERE route_id = ?`, now, routeID).Exec()
+			return c.JSON(fiber.Map{"status": "cleared"})
+		}
+		nextID, err := gocql.ParseUUID(*body.NextRouteID)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid next_route_id"})
+		}
+		// Prevent self-referencing chains
+		if nextID == routeID {
+			return c.Status(400).JSON(fiber.Map{"error": "route cannot chain to itself"})
+		}
+		session.Query(`UPDATE arteria.routes SET next_route_id = ?, updated_at = ? WHERE route_id = ?`, nextID, now, routeID).Exec()
+		return c.JSON(fiber.Map{"status": "chained", "next_route_id": nextID.String()})
+	})
+
+	// Get the chain configuration for a route
+	api.Get("/routes/:id/chain", func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		var nextRouteID *gocql.UUID
+		session.Query(`SELECT next_route_id FROM arteria.routes WHERE route_id = ?`, routeID).Scan(&nextRouteID)
+		if nextRouteID == nil {
+			return c.JSON(fiber.Map{"next_route_id": nil})
+		}
+		// Get the next route name for display
+		var name string
+		session.Query(`SELECT name FROM arteria.routes WHERE route_id = ?`, *nextRouteID).Scan(&name)
+		return c.JSON(fiber.Map{"next_route_id": nextRouteID.String(), "next_route_name": name})
+	})
 }

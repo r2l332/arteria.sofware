@@ -66,15 +66,30 @@ func (p *Plugin) Process(ctx context.Context, envelope *plugin.MessageEnvelope) 
 		Properties:      envelope.Properties,
 	}
 
-	destTopic, destCPIDs, transformed, err := p.eng.ProcessMessage(ctx, engEnvelope)
+	destTopic, destCPIDs, transformed, outEnv, err := p.eng.ProcessMessage(ctx, engEnvelope)
 	if err != nil {
 		return plugin.ProcessResult{Err: err}, false
+	}
+
+	// Convert engine envelope back to plugin envelope
+	var resultEnvelope *plugin.MessageEnvelope
+	if outEnv != nil {
+		resultEnvelope = &plugin.MessageEnvelope{
+			MessageID:       outEnv.MessageID,
+			MessageType:     outEnv.MessageType,
+			TriggerEvent:    outEnv.TriggerEvent,
+			SendingFacility: outEnv.SendingFacility,
+			PatientID:       outEnv.PatientID,
+			RawPayload:      outEnv.RawPayload,
+			Properties:      outEnv.Properties,
+		}
 	}
 
 	return plugin.ProcessResult{
 		DestinationTopic:   destTopic,
 		DestCommPointIDs:   destCPIDs,
 		TransformedPayload: transformed,
+		Envelope:           resultEnvelope,
 	}, false
 }
 

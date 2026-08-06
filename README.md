@@ -36,7 +36,7 @@ Hospital Network                    Internet (TLS 1.3)              Cloud / Arte
 | Aorta Mesh | Go + mTLS + yamux | Encrypted tunnels replacing VPNs for HL7 transport |
 | Plugin System | Go interfaces | Modular opt-in capabilities (routes-js, etc.) |
 | TLS Termination | Caddy | Auto Let's Encrypt or custom certs, security headers |
-| Frontend | Next.js 14 + Tailwind | Dashboard with Monaco editor and JS playground |
+| Frontend | Next.js 16 + Tailwind | Dashboard with Monaco editor and JS playground |
 | Auth | JWT + bcrypt + RBAC | 5 roles, 33 permissions, rate limiting, audit logging |
 | Testing | Go test harness | 35 automated tests across 6 suites |
 | Infrastructure | Docker Compose | 10-service production stack |
@@ -163,12 +163,15 @@ printf '\x0bMSH|^~\\&|SRC|HOSP|DST|FAC|202608040800||ADT^A01|123|P|2.3\rPID|||PA
 |------|-----|---------|
 | Dashboard | `/` | Live metrics, throughput, recent messages |
 | Messages | `/messages` | Message log with raw/transformed payload viewer |
-| Routes & Filters | `/routes` | Route config + Monaco JS editor for filter chains |
+| Message Flow | `/flow` | Real-time visual message flow with WebSocket streaming |
+| Routes & Filters | `/routes` | Route config + Monaco editor for filter chains |
 | Comm Points | `/comm-points` | CP management, cloud connectors, live CP logs |
 | Aorta Mesh | `/tunnel` | Capillary node management + enrollment |
 | JS Playground | `/playground` | Test JS filters live against sample payloads |
+| Patient Journey | `/patient-journey` | Timeline of all messages for a patient by MRN |
+| AI Filters | `/ai-filters` | Generate filter code from English descriptions |
 | Settings | `/settings` | Retention, backups, system health checks |
-| Errors / DLQ | `/errors` | Dead letter queue viewer |
+| Errors / DLQ | `/errors` | Dead letter queue viewer with click-to-inspect |
 | Users & Access | `/users` | User management, role assignment (admin/security only) |
 
 ## Services (Docker Compose)
@@ -179,7 +182,7 @@ printf '\x0bMSH|^~\\&|SRC|HOSP|DST|FAC|202608040800||ADT^A01|123|P|2.3\rPID|||PA
 | arteria-ingestion | 2575 | MLLP TCP listener (inbound) |
 | arteria-processing | — | V8 filter chain engine |
 | arteria-egress | — | Outbound delivery (MLLP, HTTP, Discard) |
-| arteria-api | 8080 | REST API (52 endpoints) |
+| arteria-api | 8080 | REST API (90+ endpoints) |
 | arteria-frontend | 3000 | Next.js dashboard |
 | arteria-tunnel-broker | 9443 | Aorta mTLS broker |
 | arteria-nats | 4222, 8222 | NATS JetStream |
@@ -204,9 +207,10 @@ ENABLE_PLUGINS=routes-js          # Enabled plugins (comma-separated)
 
 ## Documentation
 
-- [API Reference](docs/API.md) — All 50 REST endpoints
+- [API Reference](docs/API.md) — All 90+ REST endpoints
 - [Deployment Guide](docs/DEPLOYMENT.md) — Setup, production, monitoring, troubleshooting
 - [Console User Guide](docs/USER_GUIDE.md) — Dashboard walkthrough
+- [Capillary Setup Guide](docs/CAPILLARY_SETUP.md) — End-to-end Capillary agent deployment
 
 ## License
 

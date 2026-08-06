@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -117,10 +118,17 @@ func main() {
 				payload = payload[:len(payload)-1]
 			}
 
-			log.Printf("[BROKER] routing %d bytes from node %s via NATS subject %s", len(payload), nodeID, subject)
+			log.Printf("[BROKER] routing %d bytes from node %s port %d via NATS", len(payload), nodeID, targetPort)
 			brokerBytesIn.Add(int64(len(data)))
 			brokerMsgsRouted.Add(1)
-			if _, err := js.Publish(subject, payload); err != nil {
+
+			// Tag with source node + port so processing can match the correct INPUT CP
+			msg := nats.NewMsg(subject)
+			msg.Data = payload
+			msg.Header = nats.Header{}
+			msg.Header.Set("X-Source-Node", nodeID)
+			msg.Header.Set("X-Source-Port", fmt.Sprintf("%d", targetPort))
+			if _, err := js.PublishMsg(msg); err != nil {
 				log.Printf("[BROKER] NATS publish error: %v", err)
 			}
 		},

@@ -184,6 +184,8 @@ services:
       replicas: 4
 ```
 
+The processing container includes Python3, dotnet-sdk-8.0, and dotnet-script for polyglot filter execution. The Dockerfile uses multi-stage builds from `golang:1.23-bookworm` (required for V8) and `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim`.
+
 ### TLS
 
 For MLLP with TLS, configure the ingestion service with certificates:
@@ -208,10 +210,13 @@ Access at `https://your-domain`:
 
 - **Dashboard** — Live throughput metrics, recent messages, errors
 - **Messages** — Full message log with detail viewer (raw + transformed payload)
-- **Routes** — Route configuration with Monaco JS editor for filters
+- **Message Flow** — Real-time visual message flow with WebSocket streaming
+- **Routes** — Route configuration with Monaco editor for filter chains (JS, Python, .NET, bash, connector)
 - **Comm Points** — Communication point management with live log viewer
 - **Aorta Mesh** — Capillary node management + enrollment
-- **Errors / DLQ** — Dead letter queue viewer
+- **Patient Journey** — Timeline of all messages for a patient by MRN
+- **AI Filters** — Generate filter code from English descriptions
+- **Errors / DLQ** — Dead letter queue viewer with click-to-inspect
 
 ### NATS Monitoring
 
@@ -287,7 +292,7 @@ docker exec arteria-scylladb cqlsh -e \
 
 ### V8 filter timeout
 
-The default V8 execution timeout is 50ms. If filters are timing out, check:
+The default V8 execution timeout is 50ms. Python and bash filters have a 2s timeout. .NET (dotnet-script) filters have a 10s timeout to allow for JIT cold-start. If filters are timing out, check:
 
 ```bash
 # Look for timeout errors
@@ -370,6 +375,10 @@ TLS_CERT_DIR=./certs
 ### Self-Signed (local dev)
 
 No config needed — Caddy generates a self-signed cert for `localhost` automatically.
+
+### WebSocket Proxy
+
+The Caddy configuration includes a `/ws/*` reverse proxy rule that routes WebSocket connections to the API service. This powers the real-time Message Flow page. The Caddyfile handles this automatically — no additional configuration needed.
 
 ---
 

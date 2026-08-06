@@ -476,16 +476,27 @@ func deleteCommPoint(session *gocql.Session) fiber.Handler {
 func listRoutes(session *gocql.Session) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var items []fiber.Map
-		iter := session.Query(`SELECT route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active FROM arteria.routes`).Iter()
+		iter := session.Query(`SELECT route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, default_properties, next_route_id FROM arteria.routes`).Iter()
 		var id, srcCP, dstCP gocql.UUID
-		var name, desc, srcTopic, dstTopic string
+		var name, desc, srcTopic, dstTopic, defaultPropsRaw string
 		var isActive bool
-		for iter.Scan(&id, &name, &desc, &srcCP, &dstCP, &srcTopic, &dstTopic, &isActive) {
-			items = append(items, fiber.Map{
+		var nextRouteID *gocql.UUID
+		for iter.Scan(&id, &name, &desc, &srcCP, &dstCP, &srcTopic, &dstTopic, &isActive, &defaultPropsRaw, &nextRouteID) {
+			item := fiber.Map{
 				"route_id": id.String(), "name": name, "description": desc,
 				"source_comm_point_id": srcCP.String(), "dest_comm_point_id": dstCP.String(),
 				"source_topic": srcTopic, "destination_topic": dstTopic, "is_active": isActive,
-			})
+			}
+			if defaultPropsRaw != "" {
+				var props map[string]string
+				json.Unmarshal([]byte(defaultPropsRaw), &props)
+				item["default_properties"] = props
+			}
+			if nextRouteID != nil {
+				item["next_route_id"] = nextRouteID.String()
+			}
+			items = append(items, item)
+			nextRouteID = nil
 		}
 		iter.Close()
 		if items == nil {
@@ -501,19 +512,29 @@ func getRoute(session *gocql.Session) fiber.Handler {
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid ID"})
 		}
-		var name, desc, srcTopic, dstTopic string
+		var name, desc, srcTopic, dstTopic, defaultPropsRaw string
 		var srcCP, dstCP gocql.UUID
 		var isActive bool
-		err = session.Query(`SELECT name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active FROM arteria.routes WHERE route_id=?`, id).
-			Scan(&name, &desc, &srcCP, &dstCP, &srcTopic, &dstTopic, &isActive)
+		var nextRouteID *gocql.UUID
+		err = session.Query(`SELECT name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, default_properties, next_route_id FROM arteria.routes WHERE route_id=?`, id).
+			Scan(&name, &desc, &srcCP, &dstCP, &srcTopic, &dstTopic, &isActive, &defaultPropsRaw, &nextRouteID)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": "route not found"})
 		}
-		return c.JSON(fiber.Map{
+		result := fiber.Map{
 			"route_id": id.String(), "name": name, "description": desc,
 			"source_comm_point_id": srcCP.String(), "dest_comm_point_id": dstCP.String(),
 			"source_topic": srcTopic, "destination_topic": dstTopic, "is_active": isActive,
-		})
+		}
+		if defaultPropsRaw != "" {
+			var props map[string]string
+			json.Unmarshal([]byte(defaultPropsRaw), &props)
+			result["default_properties"] = props
+		}
+		if nextRouteID != nil {
+			result["next_route_id"] = nextRouteID.String()
+		}
+		return c.JSON(result)
 	}
 }
 

@@ -1198,3 +1198,86 @@ The ship-and-deploy model funds the SaaS development.
 Don't build multi-tenant until you have 10+ paying customers
 proving the product-market fit.
 ```
+
+---
+
+## Advanced Processing Architecture
+
+### Filter Chain Pipeline
+
+```
+Message Envelope → [Default Properties Injection] → [Filter 1] → [Filter 2] → ... → [Filter N] → Route Output
+                          ↑                              ↑              ↑
+                    Route.default_properties        Properties persist through chain
+```
+
+**Filter types and their execution model:**
+
+| Type | Runtime | Timeout | Execution Model |
+|------|---------|---------|-----------------|
+| `javascript` | V8 isolate (v8go) | 50ms | In-process, pooled (8 isolates) |
+| `conditional` | V8 isolate | 50ms | In-process, returns routing decision |
+| `lookup` | In-memory map | <1ms | Direct key-value lookup |
+| `python` | subprocess (python3) | 2s | stdin/stdout JSON envelope |
+| `bash` | subprocess (bash) | 2s | stdin/stdout JSON envelope |
+| `dotnet` | subprocess (dotnet-script) | 10s | stdin/stdout JSON envelope, JIT cold-start |
+| `connector` | HTTP client / TCP | 5s default | Outbound call, response stored in properties |
+
+### Route Properties
+
+Routes can have `default_properties` (JSON map stored in `arteria.routes.default_properties`). These are injected into the message's Properties map before the filter chain runs, unless the message already has a property with the same key. This allows:
+
+- Environment-specific config (`environment`, `compliance_level`)
+- Source system metadata (`source_system`, `department`)
+- Custom routing hints consumed by downstream filters
+
+### Connector Filters
+
+The `connector` filter type makes an outbound call mid-filter-chain:
+
+**HTTP connector:** Sends HTTP request, stores response body and status code in properties.
+- `body_template` supports Go template syntax: `{{.RawPayload}}`, `{{.Properties.key}}`
+- Response limited to 1MB
+- On failure: `response_status_property` = `"ERROR"`, `_connector_error` = error message
+
+**MLLP connector:** Sends MLLP-framed message, reads MLLP-framed ACK response.
+- Automatically extracts ACK code from MSA segment (AA/AE/AR)
+- Stores full ACK message and extracted code in separate properties
+
+### Route Chaining
+
+Routes can be chained via `next_route_id`. After route A's filter chain completes, the message (with all accumulated properties) is forwarded to route B's filter chain. Route B can have its own default properties and filters.
+
+- Maximum chain depth: 10 (prevents infinite loops)
+- Self-referencing chains are rejected at the API level
+- Each chained route injects its own default properties (without overwriting existing ones)
+
+### Fan-Out Architecture
+
+**Simple fan-out:** `fan_out_cp_ids` list on the route — all listed CPs receive every message.
+
+**Conditional fan-out:** `fan_out_config` JSON array of `FanOutEntry` objects, each with an optional condition script. The condition script reads the message envelope from stdin and prints `true`/`false` to stdout. Only CPs whose condition evaluates to true receive the message.
+
+**Delivery mechanism:** The processing service sets the `X-Dest-CP` NATS header with a comma-separated list of destination CP IDs. The egress service reads this header and delivers to exactly those CPs. This ensures precise per-route delivery even when multiple routes share the same destination topic.
+
+### End-to-End Processing Example
+
+**Scenario:** HL7 received → HTTP API enrichment → MLLP send → ACK check → error routing
+
+```
+Route A (source_topic: "ADT^A01", default_properties: {env: "prod"})
+├── Filter 1: connector (HTTP POST to patient API)
+│   → stores api_response, api_status in properties
+├── Filter 2: python (merge API data into HL7 message)
+│   → reads properties.api_response, modifies rawPayload
+├── Filter 3: connector (MLLP send to downstream system)
+│   → stores ack_message, ack_code in properties
+├── Filter 4: conditional (check ack_code)
+│   → if ack_code != "AA" → route_to: "error_handler"
+│   → if ack_code == "AA" → pass
+└── Delivery to primary dest CP
+
+Route B (name: "error_handler", destination_topic: "error_email")
+├── Filter 1: python (format error email body from properties)
+└── Delivery to email CP
+```

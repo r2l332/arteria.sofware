@@ -227,10 +227,16 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	}
 
 	destTopic := result.DestinationTopic
-	transformedPayload := result.TransformedPayload
+	wirePayload := result.TransformedPayload  // rawPayload content for delivery
 	destCPIDs := result.DestCommPointIDs
 
-	updateMessageTransformed(session, gocqlID, transformedPayload, "ROUTED", now)
+	// Store full envelope JSON in DB for audit (includes properties, metadata)
+	dbPayload := wirePayload
+	if result.Envelope != nil {
+		envelopeJSON, _ := json.Marshal(result.Envelope)
+		dbPayload = string(envelopeJSON)
+	}
+	updateMessageTransformed(session, gocqlID, dbPayload, "ROUTED", now)
 
 	if parsed.PatientID != "" {
 		session.Query(`INSERT INTO arteria.messages_by_patient (patient_id, created_at, message_id) VALUES (?, ?, ?)`,
@@ -242,7 +248,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 
 	routeSubject := subjectRoute + "." + destTopic
 	msg := nats.NewMsg(routeSubject)
-	msg.Data = []byte(transformedPayload)
+	msg.Data = []byte(wirePayload)
 	if len(destCPIDs) > 0 {
 		msg.Header = nats.Header{}
 		msg.Header.Set("X-Dest-CP", strings.Join(destCPIDs, ","))
@@ -268,7 +274,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		"message_id": msgID.String(), "message_type": parsed.MessageType,
 		"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
 		"sending_facility": parsed.SendingFacility, "status": "ROUTED",
-		"route_name": destTopic, "size_bytes": len(transformedPayload),
+		"route_name": destTopic, "size_bytes": len(wirePayload),
 	}))
 
 	log.Info("message processed and routed", logging.Fields{

@@ -82,27 +82,15 @@ Create a communication point.
 
 Update a communication point.
 
-**Request Body:** Same as create.
-
-**Response:**
-```json
-{"status": "updated"}
-```
-
 ### `DELETE /api/v1/comm-points/:id`
 
 Delete a communication point.
-
-**Response:**
-```json
-{"status": "deleted"}
-```
 
 ---
 
 ## Routes
 
-Routes connect a source communication point to a destination through a filter chain.
+Routes connect a source communication point to a destination through a filter chain. Routes support default properties, fan-out delivery to multiple outputs, conditional fan-out, and chaining to other routes.
 
 ### `GET /api/v1/routes`
 
@@ -120,7 +108,9 @@ List all routes.
       "dest_comm_point_id": "a1000000-...",
       "source_topic": "ADT^A01",
       "destination_topic": "admissions",
-      "is_active": true
+      "is_active": true,
+      "default_properties": {"environment": "production", "source": "hospital_a"},
+      "next_route_id": "b2000000-..."
     }
   ],
   "count": 1
@@ -128,13 +118,14 @@ List all routes.
 ```
 
 **Source topic matching:**
-- `ADT^A01` — matches only ADT^A01 messages
+- `ADT^A01` — matches only ADT admit messages
+- `ORM^O01` — matches only ORM order messages
 - `*` — catch-all, matches any message type
 - Most specific match wins; catch-all is a fallback
 
 ### `GET /api/v1/routes/:id`
 
-Get a single route by ID.
+Get a single route by ID. Includes `default_properties` and `next_route_id` if set.
 
 ### `POST /api/v1/routes`
 
@@ -160,11 +151,127 @@ Create a route.
 
 ### `PUT /api/v1/routes/:id`
 
-Update a route. Same body as create.
+Update a route. Supports `fan_out_cp_ids` for simple fan-out delivery.
+
+**Request Body:**
+```json
+{
+  "name": "Lab Orders Route",
+  "description": "Routes ORM messages to the lab",
+  "source_comm_point_id": "uuid",
+  "dest_comm_point_id": "uuid",
+  "fan_out_cp_ids": ["uuid-1", "uuid-2"],
+  "source_topic": "ORM^O01",
+  "destination_topic": "lab_orders",
+  "is_active": true
+}
+```
 
 ### `DELETE /api/v1/routes/:id`
 
 Delete a route.
+
+### Route Properties
+
+#### `PUT /api/v1/routes/:id/properties`
+
+Set default properties on a route. These key-value pairs are injected into every message's `properties` map before the filter chain runs. Filters can read, modify, and add properties — they persist through the entire chain and are stored in the database.
+
+**Request Body:**
+```json
+{
+  "properties": {
+    "environment": "production",
+    "source_system": "hospital_a",
+    "compliance_level": "hipaa"
+  }
+}
+```
+
+**Response:**
+```json
+{"status": "updated", "properties": {"environment": "production", "source_system": "hospital_a", "compliance_level": "hipaa"}}
+```
+
+#### `GET /api/v1/routes/:id/properties`
+
+Get the default properties for a route.
+
+**Response:**
+```json
+{"properties": {"environment": "production", "source_system": "hospital_a"}}
+```
+
+### Route Chaining
+
+Routes can be chained so that after one route's filter chain completes, the message is forwarded to another route's filter chain. Maximum chain depth is 10 to prevent infinite loops.
+
+#### `PUT /api/v1/routes/:id/chain`
+
+Set the next route in a chain.
+
+**Request Body:**
+```json
+{"next_route_id": "uuid-of-next-route"}
+```
+
+To clear the chain:
+```json
+{"next_route_id": null}
+```
+
+**Response:**
+```json
+{"status": "chained", "next_route_id": "uuid"}
+```
+
+#### `GET /api/v1/routes/:id/chain`
+
+Get the chain configuration.
+
+**Response:**
+```json
+{"next_route_id": "uuid", "next_route_name": "Post-Processing Route"}
+```
+
+### Fan-Out
+
+#### `PUT /api/v1/routes/:id/fan-out`
+
+Configure conditional fan-out. Each entry defines an output CP that receives the message, optionally gated by a condition script.
+
+**Request Body:**
+```json
+{
+  "entries": [
+    {"cp_id": "uuid-1", "name": "Lab System", "condition_type": "", "condition": ""},
+    {"cp_id": "uuid-2", "name": "Radiology", "condition_type": "python", "condition": "import sys,json; e=json.loads(sys.stdin.read()); print('true' if 'RAD' in e.get('rawPayload','') else 'false')"},
+    {"cp_id": "uuid-3", "name": "ENT", "condition_type": "javascript", "condition": "const e=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(e.rawPayload.includes('ENT'))"}
+  ]
+}
+```
+
+**Condition scripts:** Read the message envelope JSON from stdin, print `true`/`false`/`1`/`yes` to stdout. Supported types: `python`, `javascript`, `bash`, `dotnet`. Empty condition = unconditional.
+
+**Response:**
+```json
+{"status": "configured", "entries": 3}
+```
+
+#### `GET /api/v1/routes/:id/fan-out`
+
+Get the conditional fan-out configuration.
+
+### Route Rewire
+
+#### `PATCH /api/v1/routes/:id/rewire`
+
+Quick rewire a route's source or destination CP.
+
+**Request Body:**
+```json
+{"source_comm_point_id": "new-uuid", "dest_comm_point_id": "new-uuid"}
+```
 
 ---
 
@@ -175,33 +282,6 @@ Filters are ordered processing steps within a route's filter chain. They execute
 ### `GET /api/v1/routes/:id/filters`
 
 List all filters for a route, ordered by `execution_order`.
-
-**Response:**
-```json
-{
-  "filters": [
-    {
-      "filter_id": "c1000000-...",
-      "name": "Validate Patient ID",
-      "filter_type": "conditional",
-      "execution_order": 0,
-      "js_script": "function evaluate(msg) { ... }",
-      "config_json": "",
-      "is_active": true
-    },
-    {
-      "filter_id": "c1000000-...",
-      "name": "Enrich ADT Message",
-      "filter_type": "javascript",
-      "execution_order": 1,
-      "js_script": "function transform(msg) { ... }",
-      "config_json": "",
-      "is_active": true
-    }
-  ],
-  "count": 2
-}
-```
 
 ### `POST /api/v1/routes/:id/filters`
 
@@ -221,32 +301,117 @@ Create a filter on a route.
 
 **Filter Types:**
 
-| Type | JS Entry Point | Description |
-|------|---------------|-------------|
-| `javascript` | `transform(msg)` | Modify the message and return it |
-| `conditional` | `evaluate(msg)` | Return `{action: "pass"}`, `{action: "reject", reason: "..."}`, or `{action: "route_to", route_to: "dest"}` |
+| Type | Entry Point | Description |
+|------|------------|-------------|
+| `javascript` | `transform(msg)` in V8 | Modify the message and return it. Native V8 speed (~1ms). |
+| `conditional` | `evaluate(msg)` in V8 | Return `{action: "pass"}`, `{action: "reject", reason: "..."}`, or `{action: "route_to", route_to: "dest"}` |
 | `lookup` | — | Enriches message from a lookup table (configured via `config_json`) |
+| `python` | Script via stdin/stdout | Full Python3 — reads envelope JSON from stdin, writes modified envelope to stdout |
+| `bash` | Script via stdin/stdout | Bash script — same stdin/stdout contract |
+| `dotnet` | `dotnet-script eval` | C# script via dotnet-script — same stdin/stdout contract. 10s timeout for JIT. |
+| `connector` | — | Makes an outbound HTTP or MLLP call mid-chain and stores the response in properties (see below) |
 
-**Message object available in JS:**
-```javascript
+**Timeouts:** JavaScript runs in V8 with 50ms limit. Python/bash have 2s limit. Dotnet has 10s limit (JIT cold-start).
+
+**Message object (available in all filter types as JSON):**
+```json
 {
-  messageId: "uuid",
-  messageType: "ADT",
-  triggerEvent: "A01",
-  sendingFacility: "HOSP_A",
-  patientId: "PAT001",
-  rawPayload: "MSH|...",
-  properties: {}       // Read/write key-value metadata
+  "messageId": "uuid",
+  "messageType": "ADT",
+  "triggerEvent": "A01",
+  "sendingFacility": "HOSP_A",
+  "patientId": "PAT001",
+  "rawPayload": "MSH|...",
+  "properties": {
+    "environment": "production",
+    "my_custom_var": "value"
+  }
 }
 ```
+
+**Properties** are the primary mechanism for passing data between filters. Route default properties are injected first, then each filter can read/write them freely. They persist through the entire chain and are stored in the database audit trail.
+
+### Connector Filter
+
+The `connector` filter type makes an outbound call (HTTP or MLLP) mid-filter-chain and stores the response in message properties. This enables patterns like: receive HL7 → call REST API for enrichment data → continue processing with the API response.
+
+**`config_json` for HTTP connector:**
+```json
+{
+  "connector_type": "HTTP",
+  "url": "https://api.example.com/patient/lookup",
+  "method": "POST",
+  "headers": {"Content-Type": "application/json", "Authorization": "Bearer token"},
+  "timeout_ms": 5000,
+  "body_template": "{{.RawPayload}}",
+  "response_property": "api_response",
+  "response_status_property": "api_status"
+}
+```
+
+**`config_json` for MLLP connector:**
+```json
+{
+  "connector_type": "MLLP",
+  "host": "downstream-system.local",
+  "port": 2575,
+  "timeout_ms": 5000,
+  "response_property": "ack_message",
+  "response_status_property": "ack_code"
+}
+```
+
+After execution, subsequent filters can read `msg.properties.api_response`, `msg.properties.ack_code`, etc. The MLLP connector automatically extracts the ACK code from the MSA segment (AA/AE/AR).
+
+If the outbound call fails, `response_status_property` is set to `"ERROR"` and `_connector_error` contains the error message. The filter chain continues — use a subsequent conditional filter to branch on errors.
+
+**Example: Send HL7 → Check ACK → Route failures to email**
+
+Route filter chain:
+1. `connector` filter — sends to downstream MLLP, stores `ack_code` and `ack_message`
+2. `conditional` filter — if `msg.properties.ack_code !== "AA"` → `{action: "route_to", route_to: "error_email"}`
+3. On success, message continues to the route's normal destination
 
 ### `PUT /api/v1/filters/:id`
 
 Update a filter by its ID.
 
-### `DELETE /api/v1/routes/:routeId/filters/:order?order=N`
+### `DELETE /api/v1/routes/:routeId/filters/:order`
 
 Delete a filter by route ID and execution order.
+
+### `PUT /api/v1/routes/:id/filters/reorder`
+
+Reorder filters within a route.
+
+**Request Body:**
+```json
+{
+  "order": [
+    {"filter_id": "uuid-1", "position": 0},
+    {"filter_id": "uuid-2", "position": 1},
+    {"filter_id": "uuid-3", "position": 2}
+  ]
+}
+```
+
+### `POST /api/v1/filters/:id/move`
+
+Move a filter from one route to another.
+
+**Request Body:**
+```json
+{"from_route_id": "uuid", "to_route_id": "uuid", "position": 0}
+```
+
+### `POST /api/v1/filters/:id/test`
+
+Test a filter with a specific payload (live debugging).
+
+**Request Body:**
+```json
+{"payload": "{\"messageId\":\"test\",\"messageType\":\"ADT\",\"triggerEvent\":\"A01\",\"sendingFacility\":\"HOSP\",\"patientId\":\"PAT001\",\"rawPayload\":\"MSH|...\",\"properties\":{}}"}
+```
 
 ---
 
@@ -257,16 +422,6 @@ Shared key-value data accessible from lookup filters.
 ### `GET /api/v1/lookups`
 
 List all lookup tables.
-
-**Response:**
-```json
-{
-  "lookup_tables": [
-    {"table_id": "uuid", "name": "facility_codes", "description": "Maps facility IDs to names"}
-  ],
-  "count": 1
-}
-```
 
 ### `POST /api/v1/lookups`
 
@@ -280,17 +435,6 @@ Create a lookup table.
 ### `GET /api/v1/lookups/:id/entries`
 
 List all entries in a lookup table.
-
-**Response:**
-```json
-{
-  "entries": [
-    {"key": "HOSP_A", "value": "City Hospital"},
-    {"key": "LAB_1", "value": "Central Lab"}
-  ],
-  "count": 2
-}
-```
 
 ### `PUT /api/v1/lookups/:id/entries`
 
@@ -309,27 +453,9 @@ Upsert a lookup entry.
 
 List recent messages. Maximum `limit=200`.
 
-**Response:**
-```json
-{
-  "messages": [
-    {
-      "message_id": "uuid",
-      "patient_id": "PAT001",
-      "message_type": "ADT",
-      "trigger_event": "A01",
-      "sending_facility": "HOSP_A",
-      "status": "ROUTED",
-      "created_at": "2026-08-04T08:18:49Z"
-    }
-  ],
-  "count": 1
-}
-```
-
 ### `GET /api/v1/messages/:id`
 
-Get full message detail including raw and transformed payloads.
+Get full message detail including raw and transformed payloads, properties, and route metadata.
 
 **Response:**
 ```json
@@ -350,7 +476,7 @@ Get full message detail including raw and transformed payloads.
 }
 ```
 
-**Message statuses:** `RECEIVED`, `FILTERING`, `FILTERED`, `ROUTED`, `DELIVERED`, `ERROR`, `DLQ`
+**Message statuses:** `RECEIVED`, `ROUTED`, `DELIVERED`, `ERROR`, `DLQ`, `DROPPED`, `HELD`, `RETRYING`
 
 ### `GET /api/v1/messages/status/:status?limit=50`
 
@@ -360,6 +486,66 @@ List messages by status.
 
 List messages by patient ID.
 
+### Message Control
+
+#### `POST /api/v1/messages/:id/drop`
+
+Drop a message (mark as DROPPED, remove from queue).
+
+**Request Body:**
+```json
+{"reason": "Duplicate message"}
+```
+
+#### `POST /api/v1/messages/:id/retry`
+
+Re-inject a failed message back into the ingestion stream.
+
+#### `POST /api/v1/messages/:id/hold`
+
+Hold a message (pause delivery, mark as HELD).
+
+#### `POST /api/v1/messages/:id/release`
+
+Release a held message back into processing.
+
+### Message Trace
+
+#### `GET /api/v1/messages/:id/trace`
+
+Get the full journey trace of a message through the pipeline.
+
+**Response:**
+```json
+{
+  "message_id": "uuid",
+  "status": "DELIVERED",
+  "steps": [
+    {"stage": "received", "timestamp": "...", "component": "Ingestion", "input": "MSH|..."},
+    {"stage": "processed", "timestamp": "...", "component": "Processing Engine", "duration_ms": 12},
+    {"stage": "routed", "timestamp": "...", "component": "Router"},
+    {"stage": "delivered", "timestamp": "...", "component": "Egress"}
+  ]
+}
+```
+
+### Route Flush
+
+#### `POST /api/v1/routes/:id/flush`
+
+Purge all queued messages for a route.
+
+**Request Body:**
+```json
+{"reason": "Clearing stale messages after config change"}
+```
+
+### Route Recent Messages
+
+#### `GET /api/v1/routes/:id/recent?limit=10`
+
+Get the last N messages that passed through a specific route.
+
 ---
 
 ## Errors / Dead Letter Queue
@@ -367,23 +553,6 @@ List messages by patient ID.
 ### `GET /api/v1/errors?limit=50`
 
 List error records.
-
-**Response:**
-```json
-{
-  "errors": [
-    {
-      "message_id": "uuid",
-      "error_type": "FILTER_ERROR",
-      "error_details": "message rejected by filter: Missing Patient ID",
-      "retry_count": 0,
-      "max_retries": 3,
-      "created_at": "2026-08-04T09:19:16Z"
-    }
-  ],
-  "count": 1
-}
-```
 
 **Error types:** `FILTER_ERROR`, `TIMEOUT`, `DELIVERY_FAILED`, `VALIDATION`
 
@@ -395,15 +564,6 @@ List error records.
 
 Aggregate counts from ScyllaDB.
 
-**Response:**
-```json
-{
-  "total_messages": 15,
-  "total_routes": 2,
-  "total_errors": 1
-}
-```
-
 ---
 
 ## Live Metrics
@@ -414,49 +574,6 @@ Real-time metrics from running services, collected via NATS request-reply.
 
 Returns live counters from ingestion and processing services.
 
-**Response:**
-```json
-{
-  "ingestion": {
-    "received": 10,
-    "processed": 10,
-    "routed": 0,
-    "errors": 0,
-    "rejected": 0,
-    "dlq": 0,
-    "bytes_in": 810,
-    "uptime_seconds": 120.5,
-    "msgs_per_second": 2.0,
-    "msgs_per_minute": 35.3,
-    "comm_points": {
-      "a1000000-...": {
-        "id": "a1000000-...",
-        "name": "Default MLLP Input",
-        "direction": "INPUT",
-        "received": 10,
-        "sent": 0,
-        "errors": 0,
-        "bytes_in": 810,
-        "bytes_out": 0,
-        "last_seen": "2026-08-04T09:50:08Z"
-      }
-    }
-  },
-  "processing": {
-    "received": 10,
-    "processed": 10,
-    "routed": 10,
-    "errors": 0,
-    "rejected": 0,
-    "dlq": 0,
-    "bytes_in": 810,
-    "uptime_seconds": 119.2,
-    "msgs_per_second": 2.0,
-    "msgs_per_minute": 37.5
-  }
-}
-```
-
 ### `GET /api/v1/metrics/comm-points`
 
 Returns per-communication-point metrics with recent logs.
@@ -465,31 +582,34 @@ Returns per-communication-point metrics with recent logs.
 
 Returns full log buffer (up to 200 entries) for a specific communication point.
 
-**Response:**
+---
+
+## WebSocket Live Streaming
+
+### `WS /ws/flow`
+
+WebSocket endpoint for real-time message flow events. Streams all pipeline events as JSON:
+
+**Event types:**
+- `message` — message received/routed/delivered/dropped
+- `error` — processing error
+- `metric` — live metric snapshot (every 1s)
+- `trace` — message trace event
+
+**Event format:**
 ```json
 {
-  "comm_point_id": "a1000000-...",
-  "name": "Default MLLP Input",
-  "direction": "INPUT",
-  "received": 10,
-  "errors": 0,
-  "log_count": 20,
-  "logs": [
-    {
-      "timestamp": "2026-08-04T09:50:08.525Z",
-      "level": "INFO",
-      "message": "message received",
-      "message_id": "25defbb6-...",
-      "size_bytes": 81
-    },
-    {
-      "timestamp": "2026-08-04T09:50:08.526Z",
-      "level": "INFO",
-      "message": "published to NATS",
-      "message_id": "25defbb6-...",
-      "size_bytes": 81
-    }
-  ]
+  "type": "message",
+  "timestamp": "2026-08-06T10:30:00.000Z",
+  "data": {
+    "message_id": "uuid",
+    "message_type": "ADT",
+    "trigger_event": "A01",
+    "patient_id": "PAT001",
+    "status": "ROUTED",
+    "stage": "routed",
+    "route_name": "admissions"
+  }
 }
 ```
 
@@ -512,10 +632,9 @@ Change log level at runtime (no restart required).
 
 **Valid levels:** `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`
 
-**Response:**
-```json
-{"status": "updated", "level": "WARN"}
-```
+### `GET /api/v1/config/modules`
+
+List enabled modules (HL7, FHIR, DICOM, Tunnel).
 
 ---
 
@@ -567,9 +686,6 @@ Execute a JS filter against a test payload in a real V8 isolate.
 **Required role:** `admin` or `security`
 
 ### `GET /api/v1/users`
-
-List all users.
-
 ### `POST /api/v1/users`
 
 Create a user. **Request:** `{"username": "dev1", "password": "securepass123", "role": "developer"}`
@@ -579,12 +695,32 @@ Create a user. **Request:** `{"username": "dev1", "password": "securepass123", "
 Update role or active status. **Request:** `{"role": "operator"}` or `{"is_active": false}`
 
 ### `DELETE /api/v1/users/:id`
-
-Delete a user.
-
 ### `GET /api/v1/roles`
 
 List all roles with their permissions.
+
+### `GET /api/v1/users/online`
+
+List currently active sessions.
+
+---
+
+## Internal Messaging
+
+### `GET /api/v1/messages/internal/inbox`
+### `GET /api/v1/messages/internal/sent`
+### `POST /api/v1/messages/internal`
+### `PUT /api/v1/messages/internal/:id/read`
+### `GET /api/v1/messages/internal/unread-count`
+
+---
+
+## Organisations
+
+### `GET /api/v1/organisations`
+### `POST /api/v1/organisations`
+### `GET /api/v1/organisations/:id`
+### `PUT /api/v1/organisations/:id/branding`
 
 ---
 
@@ -612,7 +748,7 @@ Returns all supported CP connector types grouped by category.
 
 ### `GET /api/v1/audit-log?username=admin&limit=50`
 
-View security audit log for a user. **Required role:** `admin` or `security`
+View security audit log. **Required role:** `admin` or `security`
 
 ---
 
@@ -645,3 +781,58 @@ Get current message retention TTL settings.
 ### `PUT /api/v1/config/retention`
 
 Update retention policy. **Request:** `{"messages_ttl_days": 30, "error_messages_ttl_days": 90}`
+
+---
+
+## Platform Administration
+
+### `GET /api/v1/platform/health`
+
+Full system health check (ScyllaDB, NATS, services).
+
+### `GET /api/v1/platform/tunnel-stats`
+
+Aorta tunnel statistics.
+
+### `GET /api/v1/platform/usage`
+
+Platform usage metrics.
+
+### `GET /api/v1/platform/logs/:service`
+
+View logs for a specific service.
+
+### `GET /api/v1/platform/nats-stats`
+
+NATS JetStream statistics.
+
+### `GET /api/v1/platform/connections`
+
+Connection history.
+
+---
+
+## USP Features
+
+### Patient Journey
+
+#### `GET /api/v1/patients/:id/journey`
+
+Get the complete message timeline for a patient by MRN.
+
+### AI Filter Generator
+
+#### `POST /api/v1/ai/generate-filter`
+
+Generate filter code from an English description.
+
+**Request Body:**
+```json
+{"description": "reject messages without a patient ID", "language": "python"}
+```
+
+### Compliance Timeline
+
+#### `GET /api/v1/compliance/timeline?hours=24`
+
+View compliance events over a time window.

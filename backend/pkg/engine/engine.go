@@ -5,10 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/gocql/gocql"
@@ -46,17 +51,44 @@ type Filter struct {
 	IsActive       bool
 }
 
+// FanOutEntry defines a conditional output CP in a fan-out configuration.
+type FanOutEntry struct {
+	CPID          string `json:"cp_id"`
+	Name          string `json:"name,omitempty"`
+	ConditionType string `json:"condition_type,omitempty"` // "python", "javascript", "bash", "" (unconditional)
+	Condition     string `json:"condition,omitempty"`      // Script that returns "true"/"false" on stdout
+}
+
 // Route represents a routing rule with its filter chain loaded.
 type Route struct {
-	RouteID          gocql.UUID
-	Name             string
-	SourceCommPoint  gocql.UUID
-	DestCommPoint    gocql.UUID
-	FanOutCPIDs      []gocql.UUID
-	SourceTopic      string
-	DestinationTopic string
-	IsActive         bool
-	Filters          []Filter
+	RouteID            gocql.UUID
+	Name               string
+	SourceCommPoint    gocql.UUID
+	DestCommPoint      gocql.UUID
+	FanOutCPIDs        []gocql.UUID   // Simple unconditional fan-out (legacy)
+	FanOutConfig       []FanOutEntry  // Conditional fan-out
+	FanOutConfigRaw    string         // Raw JSON from DB
+	SourceTopic        string
+	DestinationTopic   string
+	IsActive           bool
+	Filters            []Filter
+	DefaultProperties  map[string]string // Injected into every message before the filter chain
+	DefaultPropsRaw    string            // Raw JSON from DB
+	NextRouteID        *gocql.UUID       // If set, forward to this route after completion
+}
+
+// ConnectorConfig defines an outbound call made mid-filter-chain.
+type ConnectorConfig struct {
+	ConnectorType          string            `json:"connector_type"`           // "HTTP", "MLLP"
+	URL                    string            `json:"url,omitempty"`            // HTTP endpoint
+	Method                 string            `json:"method,omitempty"`         // GET, POST, PUT
+	Headers                map[string]string `json:"headers,omitempty"`
+	TimeoutMs              int               `json:"timeout_ms,omitempty"`     // default 5000
+	Host                   string            `json:"host,omitempty"`           // MLLP host
+	Port                   int               `json:"port,omitempty"`           // MLLP port
+	BodyTemplate           string            `json:"body_template,omitempty"`  // Go template for HTTP body, {{.RawPayload}}, {{.Properties.key}}
+	ResponseProperty       string            `json:"response_property"`        // Property key to store the response body
+	ResponseStatusProperty string            `json:"response_status_property"` // Property key to store the status code / ACK code
 }
 
 // Engine is the core processing engine that manages routes, filters, and V8 execution.
@@ -133,8 +165,18 @@ func (e *Engine) StartConfigReloader(ctx context.Context, interval time.Duration
 }
 
 // ProcessMessage runs a message through the matching route's filter chain.
-// Returns: destination topic, dest comm point IDs (primary + fan-out), transformed payload, error
-func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, []string, string, error) {
+// Returns: destination topic, dest comm point IDs, transformed rawPayload, full output envelope, error
+func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) (string, []string, string, *MessageEnvelope, error) {
+	return e.processMessageWithDepth(ctx, envelope, 0)
+}
+
+const maxChainDepth = 10
+
+func (e *Engine) processMessageWithDepth(ctx context.Context, envelope *MessageEnvelope, depth int) (string, []string, string, *MessageEnvelope, error) {
+	if depth >= maxChainDepth {
+		return "", nil, "", nil, fmt.Errorf("route chain depth exceeded (max %d)", maxChainDepth)
+	}
+
 	e.routesMu.RLock()
 	routes := e.routes
 	e.routesMu.RUnlock()
@@ -164,7 +206,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 	if matchedRoute == nil {
 		// No route matched, pass through
 		payloadBytes, _ := json.Marshal(envelope)
-		return "default", nil, string(payloadBytes), nil
+		return "default", nil, string(payloadBytes), envelope, nil
+	}
+
+	// Inject route default properties into the message
+	if len(matchedRoute.DefaultProperties) > 0 {
+		if envelope.Properties == nil {
+			envelope.Properties = make(map[string]string)
+		}
+		for k, v := range matchedRoute.DefaultProperties {
+			if _, exists := envelope.Properties[k]; !exists {
+				envelope.Properties[k] = v
+			}
+		}
 	}
 
 	// Collect all destination CP IDs (primary + fan-out)
@@ -173,14 +227,27 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 		destCPIDs = append(destCPIDs, cpID.String())
 	}
 
+	// Evaluate conditional fan-out entries
+	for _, entry := range matchedRoute.FanOutConfig {
+		if entry.Condition == "" || entry.ConditionType == "" {
+			// No condition — always include
+			destCPIDs = append(destCPIDs, entry.CPID)
+		} else {
+			// Evaluate condition script
+			if e.evaluateCondition(ctx, entry, envelope) {
+				destCPIDs = append(destCPIDs, entry.CPID)
+			}
+		}
+	}
+
 	// Execute filter chain
 	result, err := e.executeFilterChain(ctx, matchedRoute, envelope)
 	if err != nil {
-		return "", nil, "", fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
+		return "", nil, "", nil, fmt.Errorf("filter chain error on route %s: %w", matchedRoute.Name, err)
 	}
 
 	if result.Action == "reject" {
-		return "", nil, "", fmt.Errorf("message rejected by filter: %s", result.Reason)
+		return "", nil, "", nil, fmt.Errorf("message rejected by filter: %s", result.Reason)
 	}
 
 	destTopic := matchedRoute.DestinationTopic
@@ -190,11 +257,19 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 
 	// If no filters modified the message, pass through the raw payload unchanged
 	if len(matchedRoute.Filters) == 0 || !hasActiveFilters(matchedRoute.Filters) {
-		return destTopic, destCPIDs, result.Output.RawPayload, nil
+		if matchedRoute.NextRouteID != nil {
+			return e.chainToRoute(ctx, matchedRoute.NextRouteID, result.Output, depth)
+		}
+		return destTopic, destCPIDs, result.Output.RawPayload, result.Output, nil
 	}
 
-	// Filters ran — deliver the rawPayload (which filters update), not the full envelope
-	return destTopic, destCPIDs, result.Output.RawPayload, nil
+	// Route chaining: forward to next route if configured
+	if matchedRoute.NextRouteID != nil {
+		return e.chainToRoute(ctx, matchedRoute.NextRouteID, result.Output, depth)
+	}
+
+	// Filters ran — deliver the rawPayload, store full envelope for audit
+	return destTopic, destCPIDs, result.Output.RawPayload, result.Output, nil
 }
 
 // executeFilterChain runs all active filters for a route in order.
@@ -216,6 +291,8 @@ func (e *Engine) executeFilterChain(ctx context.Context, route *Route, envelope 
 			result, err = e.executeConditionalFilter(ctx, &filter, current)
 		case "lookup":
 			result, err = e.executeLookupFilter(&filter, current)
+		case "connector":
+			result, err = e.executeConnectorFilter(ctx, &filter, current)
 		case "python", "bash", "powershell", "dotnet":
 			result, err = e.executeScriptFilter(ctx, &filter, current)
 		default:
@@ -347,14 +424,67 @@ func hasActiveFilters(filters []Filter) bool {
 	return false
 }
 
+// evaluateCondition runs a condition script and returns true if the message should be delivered.
+func (e *Engine) evaluateCondition(ctx context.Context, entry FanOutEntry, envelope *MessageEnvelope) bool {
+	var cmd string
+	var args []string
+	switch entry.ConditionType {
+	case "python":
+		cmd = "python3"
+		args = []string{"-c", entry.Condition}
+	case "javascript":
+		cmd = "node"
+		args = []string{"-e", entry.Condition}
+	case "bash":
+		cmd = "bash"
+		args = []string{"-c", entry.Condition}
+	case "dotnet":
+		cmd = "dotnet-script"
+		args = []string{"eval", entry.Condition}
+	default:
+		return true // Unknown type — deliver unconditionally
+	}
+
+	inputBytes, _ := json.Marshal(envelope)
+	execCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	proc := exec.CommandContext(execCtx, cmd, args...)
+	proc.Stdin = bytes.NewReader(inputBytes)
+
+	var stdout bytes.Buffer
+	proc.Stdout = &stdout
+
+	if err := proc.Run(); err != nil {
+		// Script error or non-zero exit = don't deliver
+		return false
+	}
+
+	result := strings.TrimSpace(stdout.String())
+	return result == "true" || result == "1" || result == "yes"
+}
+
 func (e *Engine) loadRoutes() ([]Route, error) {
 	var routes []Route
-	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, fan_out_cp_ids FROM arteria.routes`).Iter()
+	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, fan_out_cp_ids, fan_out_config, default_properties, next_route_id FROM arteria.routes`).Iter()
 
 	var r Route
-	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive, &r.FanOutCPIDs) {
+	var nextRouteID *gocql.UUID
+	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive, &r.FanOutCPIDs, &r.FanOutConfigRaw, &r.DefaultPropsRaw, &nextRouteID) {
+		if r.FanOutConfigRaw != "" {
+			json.Unmarshal([]byte(r.FanOutConfigRaw), &r.FanOutConfig)
+		} else {
+			r.FanOutConfig = nil
+		}
+		if r.DefaultPropsRaw != "" {
+			json.Unmarshal([]byte(r.DefaultPropsRaw), &r.DefaultProperties)
+		} else {
+			r.DefaultProperties = nil
+		}
+		r.NextRouteID = nextRouteID
 		routes = append(routes, r)
 		r = Route{}
+		nextRouteID = nil
 	}
 	return routes, iter.Close()
 }
@@ -493,4 +623,218 @@ func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelo
 	}
 
 	return &FilterResult{Action: "pass", Output: &result}, nil
+}
+
+// chainToRoute finds a route by ID and processes the message through it.
+func (e *Engine) chainToRoute(ctx context.Context, routeID *gocql.UUID, envelope *MessageEnvelope, depth int) (string, []string, string, *MessageEnvelope, error) {
+	e.routesMu.RLock()
+	var target *Route
+	for i := range e.routes {
+		if e.routes[i].RouteID == *routeID && e.routes[i].IsActive {
+			target = &e.routes[i]
+			break
+		}
+	}
+	e.routesMu.RUnlock()
+
+	if target == nil {
+		return "", nil, "", nil, fmt.Errorf("chained route %s not found or inactive", routeID.String())
+	}
+
+	// Inject the target route's default properties
+	if len(target.DefaultProperties) > 0 {
+		if envelope.Properties == nil {
+			envelope.Properties = make(map[string]string)
+		}
+		for k, v := range target.DefaultProperties {
+			if _, exists := envelope.Properties[k]; !exists {
+				envelope.Properties[k] = v
+			}
+		}
+	}
+
+	result, err := e.executeFilterChain(ctx, target, envelope)
+	if err != nil {
+		return "", nil, "", nil, fmt.Errorf("chained route %s: %w", target.Name, err)
+	}
+	if result.Action == "reject" {
+		return "", nil, "", nil, fmt.Errorf("chained route %s rejected: %s", target.Name, result.Reason)
+	}
+
+	destTopic := target.DestinationTopic
+	if result.Action == "route_to" && result.RouteTO != "" {
+		destTopic = result.RouteTO
+	}
+
+	destCPIDs := []string{target.DestCommPoint.String()}
+	for _, cpID := range target.FanOutCPIDs {
+		destCPIDs = append(destCPIDs, cpID.String())
+	}
+
+	// Continue the chain if the target also has a next route
+	if target.NextRouteID != nil {
+		return e.processMessageWithDepth(ctx, result.Output, depth+1)
+	}
+
+	return destTopic, destCPIDs, result.Output.RawPayload, result.Output, nil
+}
+
+// executeConnectorFilter makes an outbound call (HTTP/MLLP) mid-filter-chain
+// and stores the response in message properties for subsequent filters.
+func (e *Engine) executeConnectorFilter(ctx context.Context, filter *Filter, envelope *MessageEnvelope) (*FilterResult, error) {
+	var cfg ConnectorConfig
+	if err := json.Unmarshal([]byte(filter.ConfigJSON), &cfg); err != nil {
+		return nil, fmt.Errorf("parse connector config: %w", err)
+	}
+
+	if envelope.Properties == nil {
+		envelope.Properties = make(map[string]string)
+	}
+
+	timeout := 5 * time.Second
+	if cfg.TimeoutMs > 0 {
+		timeout = time.Duration(cfg.TimeoutMs) * time.Millisecond
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	switch strings.ToUpper(cfg.ConnectorType) {
+	case "HTTP":
+		return e.connectorHTTP(callCtx, &cfg, filter, envelope)
+	case "MLLP":
+		return e.connectorMLLP(callCtx, &cfg, filter, envelope)
+	default:
+		return nil, fmt.Errorf("unsupported connector type: %s", cfg.ConnectorType)
+	}
+}
+
+func (e *Engine) connectorHTTP(ctx context.Context, cfg *ConnectorConfig, filter *Filter, envelope *MessageEnvelope) (*FilterResult, error) {
+	// Build request body from template or use raw payload
+	var body string
+	if cfg.BodyTemplate != "" {
+		tmpl, err := template.New("body").Parse(cfg.BodyTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("parse body template: %w", err)
+		}
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, envelope); err != nil {
+			return nil, fmt.Errorf("execute body template: %w", err)
+		}
+		body = buf.String()
+	} else {
+		body = envelope.RawPayload
+	}
+
+	method := cfg.Method
+	if method == "" {
+		method = "POST"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, cfg.URL, strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build HTTP request: %w", err)
+	}
+	for k, v := range cfg.Headers {
+		req.Header.Set(k, v)
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "text/plain")
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		envelope.Properties[cfg.ResponseProperty] = ""
+		envelope.Properties[cfg.ResponseStatusProperty] = "ERROR"
+		envelope.Properties["_connector_error"] = err.Error()
+		return &FilterResult{Action: "pass", Output: envelope}, nil
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
+	if cfg.ResponseProperty != "" {
+		envelope.Properties[cfg.ResponseProperty] = string(respBody)
+	}
+	if cfg.ResponseStatusProperty != "" {
+		envelope.Properties[cfg.ResponseStatusProperty] = fmt.Sprintf("%d", resp.StatusCode)
+	}
+
+	return &FilterResult{Action: "pass", Output: envelope}, nil
+}
+
+func (e *Engine) connectorMLLP(ctx context.Context, cfg *ConnectorConfig, filter *Filter, envelope *MessageEnvelope) (*FilterResult, error) {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		envelope.Properties[cfg.ResponseProperty] = ""
+		envelope.Properties[cfg.ResponseStatusProperty] = "ERROR"
+		envelope.Properties["_connector_error"] = err.Error()
+		return &FilterResult{Action: "pass", Output: envelope}, nil
+	}
+	defer conn.Close()
+
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
+	}
+
+	// Send MLLP-framed message: 0x0B + payload + 0x1C + 0x0D
+	var frame bytes.Buffer
+	frame.WriteByte(0x0B)
+	frame.WriteString(envelope.RawPayload)
+	frame.WriteByte(0x1C)
+	frame.WriteByte(0x0D)
+	if _, err := conn.Write(frame.Bytes()); err != nil {
+		envelope.Properties[cfg.ResponseProperty] = ""
+		envelope.Properties[cfg.ResponseStatusProperty] = "ERROR"
+		envelope.Properties["_connector_error"] = err.Error()
+		return &FilterResult{Action: "pass", Output: envelope}, nil
+	}
+
+	// Read MLLP-framed response (ACK)
+	var resp bytes.Buffer
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			resp.Write(buf[:n])
+			// Check for MLLP end-of-message
+			if bytes.Contains(resp.Bytes(), []byte{0x1C, 0x0D}) {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// Strip MLLP framing from response
+	ack := resp.Bytes()
+	if len(ack) > 0 && ack[0] == 0x0B {
+		ack = ack[1:]
+	}
+	if idx := bytes.Index(ack, []byte{0x1C}); idx >= 0 {
+		ack = ack[:idx]
+	}
+
+	ackStr := string(ack)
+	if cfg.ResponseProperty != "" {
+		envelope.Properties[cfg.ResponseProperty] = ackStr
+	}
+
+	// Extract ACK code from MSA segment (MSA|AA|..., MSA|AE|..., MSA|AR|...)
+	ackCode := "UNKNOWN"
+	for _, line := range strings.Split(ackStr, "\r") {
+		if strings.HasPrefix(line, "MSA|") {
+			parts := strings.Split(line, "|")
+			if len(parts) >= 2 {
+				ackCode = parts[1]
+			}
+			break
+		}
+	}
+	if cfg.ResponseStatusProperty != "" {
+		envelope.Properties[cfg.ResponseStatusProperty] = ackCode
+	}
+
+	return &FilterResult{Action: "pass", Output: envelope}, nil
 }

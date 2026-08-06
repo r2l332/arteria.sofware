@@ -760,24 +760,29 @@ func runFilterTests(mllpHost string, mllpPort int, apiBase string) *TestSuite {
 		}
 		time.Sleep(3 * time.Second)
 
-		// Find the message
-		result, err := apiGet(apiBase, "/api/v1/messages?limit=20")
+		// Find the message by patient_id
+		result, err := apiGet(apiBase, "/api/v1/messages?limit=50")
 		if err != nil {
 			return err
 		}
-		msgs := result["messages"].([]interface{})
-		for _, m := range msgs {
+		msgsRaw, ok := result["messages"].([]interface{})
+		if !ok {
+			return fmt.Errorf("could not get messages")
+		}
+		for _, m := range msgsRaw {
 			msg := m.(map[string]interface{})
-			st := msg["status"].(string)
-			if st == "ROUTED" || st == "DELIVERED" {
+			pid, _ := msg["patient_id"].(string)
+			st, _ := msg["status"].(string)
+			if pid == "PAT-FILTER-001" && (st == "ROUTED" || st == "DELIVERED") {
 				detail, _ := apiGet(apiBase, "/api/v1/messages/"+msg["message_id"].(string))
 				tp, _ := detail["transformed_payload"].(string)
 				if strings.Contains(tp, "processed_by") {
 					return nil
 				}
+				return fmt.Errorf("message found but transformed_payload missing processed_by (len=%d)", len(tp))
 			}
 		}
-		return fmt.Errorf("no message found with V8 transform properties")
+		return fmt.Errorf("no message found with patient_id PAT-FILTER-001")
 	})
 
 	s.run("Conditional filter rejects missing patient ID", func() error {
