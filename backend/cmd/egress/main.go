@@ -394,7 +394,18 @@ func updateDeliveryStatus(session *gocql.Session, payload []byte, status, errDet
 }
 
 // loadOutputCPs loads OUTPUT communication points from ScyllaDB.
+// Also loads route→CP mappings to determine which topics each CP should receive.
 func loadOutputCPs(session *gocql.Session) {
+	// Build a map of dest_comm_point_id → destination_topic from routes
+	cpTopicMap := make(map[string]string) // cp_id -> topic
+	routeIter := session.Query(`SELECT dest_comm_point_id, destination_topic FROM arteria.routes WHERE is_active = true ALLOW FILTERING`).Iter()
+	var destCPID gocql.UUID
+	var destTopic string
+	for routeIter.Scan(&destCPID, &destTopic) {
+		cpTopicMap[destCPID.String()] = destTopic
+	}
+	routeIter.Close()
+
 	var cps []OutputCP
 	iter := session.Query(`SELECT comm_point_id, name, direction, protocol, host, port, is_active, max_retries, retry_delay_ms, timeout_ms, tunnel_enabled, tunnel_node_id, tunnel_local_port FROM arteria.communication_points`).Iter()
 
@@ -405,6 +416,10 @@ func loadOutputCPs(session *gocql.Session) {
 
 	for iter.Scan(&id, &name, &direction, &protocol, &host, &port, &isActive, &maxRetries, &retryDelay, &timeout, &tunnelEnabled, &tunnelNodeID, &tunnelLocalPort) {
 		if direction == "OUTPUT" && isActive {
+			topic := "*"
+			if t, ok := cpTopicMap[id.String()]; ok {
+				topic = t
+			}
 			cps = append(cps, OutputCP{
 				CommPointID:     id.String(),
 				Name:            name,
@@ -415,7 +430,7 @@ func loadOutputCPs(session *gocql.Session) {
 				RetryDelayMs:    retryDelay,
 				TimeoutMs:       timeout,
 				IsActive:        isActive,
-				DestTopic:       "*", // TODO: add dest_topic field to CP config
+				DestTopic:       topic,
 				TunnelEnabled:   tunnelEnabled,
 				TunnelNodeID:    tunnelNodeID.String(),
 				TunnelLocalPort: tunnelLocalPort,
