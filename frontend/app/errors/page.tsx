@@ -2,17 +2,32 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import { getErrors, getMessage, type ErrorMessage, type MessageDetail } from '@/lib/api';
+import { getErrors, getMessage, getRoutes, getCommPoints, type ErrorMessage, type MessageDetail, type Route, type CommPoint } from '@/lib/api';
 import { X, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function ErrorsPage() {
   const [errors, setErrors] = useState<ErrorMessage[]>([]);
   const [selected, setSelected] = useState<ErrorMessage | null>(null);
+  const [routes, setRoutes] = useState<Route[]>([]);
+  const [commPoints, setCommPoints] = useState<CommPoint[]>([]);
   const [detail, setDetail] = useState<MessageDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   const load = () => getErrors(100).then((r) => setErrors(r.errors || [])).catch(console.error);
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    getRoutes().then((r) => setRoutes(r.routes || [])).catch(() => {});
+    getCommPoints().then((r) => setCommPoints(r.communication_points || [])).catch(() => {});
+  }, []);
+
+  const cpMap = new Map(commPoints.map(cp => [cp.comm_point_id, cp]));
+
+  const findRouteFromError = (errorDetails: string) => {
+    // Try to extract route name from error like "filter chain error on route <name>: ..."
+    const match = errorDetails.match(/on route ([^:]+):/);
+    if (match) return routes.find(r => r.name === match[1].trim());
+    return undefined;
+  };
 
   const openError = async (err: ErrorMessage) => {
     setSelected(err);
@@ -96,6 +111,30 @@ export default function ErrorsPage() {
                   <DetailCard label="Time" value={new Date(selected.created_at).toLocaleString()} />
                   <DetailCard label="Message ID" value={selected.message_id} mono />
                 </div>
+
+                {/* Route & CP context */}
+                {(() => {
+                  const route = findRouteFromError(selected.error_details);
+                  if (!route) return null;
+                  const srcCP = cpMap.get(route.source_comm_point_id);
+                  const dstCP = cpMap.get(route.dest_comm_point_id);
+                  return (
+                    <div className="bg-purple-950/20 border border-purple-900/30 rounded-lg p-3 grid grid-cols-3 gap-3 text-xs">
+                      <div>
+                        <span className="text-purple-400 font-medium">Route</span>
+                        <p className="text-white mt-0.5">{route.name}</p>
+                      </div>
+                      <div>
+                        <span className="text-blue-400 font-medium">Input CP</span>
+                        <p className="text-white mt-0.5">{srcCP?.name || '—'}</p>
+                      </div>
+                      <div>
+                        <span className="text-emerald-400 font-medium">Output CP</span>
+                        <p className="text-white mt-0.5">{dstCP?.name || '—'}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Error details */}
                 <div>
