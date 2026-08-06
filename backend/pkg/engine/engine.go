@@ -181,6 +181,11 @@ func (e *Engine) ProcessMessage(ctx context.Context, envelope *MessageEnvelope) 
 		destTopic = result.RouteTO
 	}
 
+	// If no filters modified the message, pass through the raw payload unchanged
+	if len(matchedRoute.Filters) == 0 || !hasActiveFilters(matchedRoute.Filters) {
+		return destTopic, result.Output.RawPayload, nil
+	}
+
 	outputBytes, _ := json.Marshal(result.Output)
 	return destTopic, string(outputBytes), nil
 }
@@ -325,6 +330,15 @@ func (e *Engine) executeLookupFilter(filter *Filter, envelope *MessageEnvelope) 
 }
 
 // --- Data loading helpers ---
+
+func hasActiveFilters(filters []Filter) bool {
+	for _, f := range filters {
+		if f.IsActive {
+			return true
+		}
+	}
+	return false
+}
 
 func (e *Engine) loadRoutes() ([]Route, error) {
 	var routes []Route

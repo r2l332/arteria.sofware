@@ -182,8 +182,8 @@ func handleRoutedMessage(m *nats.Msg, session *gocql.Session) {
 		return
 	}
 
-	// Deliver to all matching output CPs
-	var lastErr error
+	// Deliver to all matching output CPs — never NAK, always ACK
+	// Failed deliveries are logged and marked but don't block other messages
 	for _, cp := range targets {
 		err := deliver(cp, m.Data)
 		if err != nil {
@@ -196,9 +196,6 @@ func handleRoutedMessage(m *nats.Msg, session *gocql.Session) {
 				"error":      err.Error(),
 			})
 			met.Errors.Add(1)
-			lastErr = err
-
-			// Update message status to DELIVERY_FAILED
 			updateDeliveryStatus(session, m.Data, "DELIVERY_FAILED", err.Error())
 		} else {
 			log.Info("message delivered", logging.Fields{
@@ -209,19 +206,13 @@ func handleRoutedMessage(m *nats.Msg, session *gocql.Session) {
 				"size":       len(m.Data),
 			})
 			met.Routed.Add(1)
-
-			// Update message status to DELIVERED
 			updateDeliveryStatus(session, m.Data, "DELIVERED", "")
 		}
 	}
 
-	if lastErr != nil {
-		// At least one delivery failed — NAK for retry
-		m.Nak()
-	} else {
-		met.Processed.Add(1)
-		m.Ack()
-	}
+	// Always ACK — a broken output CP must never block other routes
+	met.Processed.Add(1)
+	m.Ack()
 }
 
 // deliver sends a message to an output CP based on its protocol.
