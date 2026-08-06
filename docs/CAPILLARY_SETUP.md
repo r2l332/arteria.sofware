@@ -8,8 +8,8 @@ Step-by-step instructions for deploying the Arteria Capillary agent at a remote 
 
 - A running Arteria instance with the tunnel broker exposed (e.g. `arteria.software:9443`)
 - Admin access to the Arteria dashboard (https://arteria.software)
-- A Linux VM/server at the remote site (Ubuntu 22.04+ recommended)
-- Git and Go 1.23+ installed (for building from source), OR use a pre-built binary
+- Docker Desktop (Windows/Mac) OR a Linux VM/server
+- Git installed
 
 ---
 
@@ -23,22 +23,61 @@ git pull origin main
 
 ---
 
-## Step 2: Build the Capillary Agent
+## Step 2: Deploy the Capillary Agent
 
+### Option A: Docker (Windows / Mac — Recommended)
+
+This runs the agent in a container. Your application runs natively on the host or in a VM.
+
+```powershell
+# From the repo root
+docker build -t capillary -f backend/Dockerfile.tunnel-agent backend/
+```
+
+Create a directory for the agent config:
+```powershell
+mkdir C:\arteria-agent   # Windows
+# or: mkdir ~/arteria-agent   # Mac/Linux
+```
+
+Enroll:
+```powershell
+docker run --rm -v C:\arteria-agent:/etc/arteria-agent capillary enroll <YOUR_TOKEN> --broker arteria.software:9443
+```
+
+Run the agent (maps ports 2575 inbound, forwards 2576 outbound to host):
+```powershell
+docker run -d --name capillary --restart always ^
+  -v C:\arteria-agent:/etc/arteria-agent ^
+  -p 2575:2575 ^
+  -e BROKER_ADDR=arteria.software:9443 ^
+  -e ACK_MODE=true ^
+  -e FORWARD_HOST=host.docker.internal ^
+  capillary connect
+```
+
+> **Key:** `FORWARD_HOST=host.docker.internal` makes outbound traffic (results coming back) route to your Windows host on port 2576.
+
+### Option B: Native Binary (Linux VM)
+
+Build for Linux:
 ```bash
 cd backend
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o capillary ./cmd/tunnel-agent
 ```
 
-Or build all platforms at once:
+Or build for Windows:
+```bash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o capillary.exe ./cmd/tunnel-agent
+```
 
+Or build all platforms:
 ```bash
 ./scripts/build-capillary.sh
 # Binaries appear in ./dist/
 ```
 
-Copy the binary to your remote server:
-
+Copy to your server and run:
 ```bash
 scp capillary user@your-server:/opt/arteria/bin/capillary
 ssh user@your-server "chmod +x /opt/arteria/bin/capillary"
@@ -251,27 +290,92 @@ You need something that:
 1. **Sends HL7** to `localhost:2575` (the agent's inbound port)
 2. **Listens on** `localhost:2576` for the processed results coming back
 
-### Option A: Use the demo VM app
+### Option A: Demo VM App on Windows (native)
+
+Build for Windows:
+```powershell
+cd demo\capillary-e2e\vm-app
+set GOOS=windows
+set GOARCH=amd64
+go build -o vm-app.exe .
+```
+
+Run it:
+```powershell
+set SEND_ADDR=localhost:2575
+set RECV_ADDR=:2576
+set WEB_PORT=8090
+.\vm-app.exe run
+```
+
+Open http://localhost:8090 to see the dashboard with live sent/received counts and patient extracts.
+
+### Option B: Demo VM App in a Linux VM (e.g. WSL2 or Hyper-V)
+
+If you're running the app inside WSL2 or a Hyper-V VM:
 
 ```bash
 cd demo/capillary-e2e/vm-app
 go build -o vm-app .
-./vm-app run
+
+# If Capillary agent is in Docker on the Windows host:
+SEND_ADDR=host.docker.internal:2575 RECV_ADDR=:2576 ./vm-app run
+
+# If Capillary agent is also inside this VM:
+SEND_ADDR=localhost:2575 RECV_ADDR=:2576 ./vm-app run
 ```
 
-This generates random HL7 messages, sends them through the Capillary, and shows processed results on a dashboard at http://localhost:8090.
+### Option C: Demo VM App in Docker (alongside the agent)
 
-### Option B: Use any MLLP sender/receiver
-
-Send:
-```bash
-# Any HL7 sender pointing at localhost:2575
-# e.g., Mirth Connect, HAPI test panel, or a simple script
+```powershell
+cd demo\capillary-e2e\vm-app
+docker build -t vm-app .
+docker run -d --name vm-app ^
+  -p 8090:8090 -p 2576:2576 ^
+  -e SEND_ADDR=host.docker.internal:2575 ^
+  -e RECV_ADDR=:2576 ^
+  -e WEB_PORT=8090 ^
+  vm-app
 ```
 
-Receive (simple netcat listener):
-```bash
-nc -lk 2576
+> **Note:** `SEND_ADDR=host.docker.internal:2575` sends to the Capillary agent's mapped port on the Docker host.
+
+### Option D: Use any MLLP-capable application
+
+Any HL7 sender/receiver works:
+- **Mirth Connect** — configure an MLLP destination to `localhost:2575`
+- **HAPI Test Panel** — send test messages to port 2575
+- **Rhapsody** — point an output CP at `localhost:2575`
+
+For receiving, set up an MLLP input on port 2576.
+
+### Network Diagram (Windows + Docker)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Windows Host                                           │
+│                                                         │
+│  ┌─────────────┐        ┌──────────────────────────┐   │
+│  │ Your App    │        │ Docker Desktop           │   │
+│  │ (or WSL VM) │        │                          │   │
+│  │             │        │  ┌────────────────────┐  │   │
+│  │ Sends HL7 ──┼───────►│  │ Capillary Agent    │  │   │
+│  │ to :2575    │        │  │ :2575 (inbound)    │  │   │
+│  │             │        │  │                    │  │   │
+│  │ Listens ◄───┼────────┼──│ forwards to        │  │   │
+│  │ on :2576    │        │  │ host.docker:2576   │  │   │
+│  │             │        │  └────────┬───────────┘  │   │
+│  │ Dashboard   │        │           │ mTLS tunnel  │   │
+│  │ :8090       │        │           ▼              │   │
+│  └─────────────┘        └───────────┼──────────────┘   │
+│                                     │                   │
+└─────────────────────────────────────┼───────────────────┘
+                                      │ Internet
+                                      ▼
+                          ┌───────────────────────┐
+                          │ arteria.software:9443 │
+                          │ (Tunnel Broker)       │
+                          └───────────────────────┘
 ```
 
 ---
@@ -280,16 +384,29 @@ nc -lk 2576
 
 Check the flow is working:
 
-1. **Agent logs:** `sudo journalctl -u arteria-capillary -f`
-   - Should see: `[AGENT] listening on :2575` and `forwarding outbound stream to 127.0.0.1:2576`
+1. **Agent logs:**
+   - Docker: `docker logs -f capillary`
+   - Linux systemd: `sudo journalctl -u arteria-capillary -f`
+   - Should see: `[AGENT] listening on :2575` and `forwarding outbound stream to ...`
 
-2. **Arteria dashboard:** Go to **Message Flow**, select your route
-   - Counters should tick up in real-time
+2. **Arteria dashboard:** Go to **Message Flow** (https://arteria.software/flow), select your route
+   - Counters should tick up in real-time every 2 seconds
 
 3. **Messages page:** Check that messages are appearing with status `DELIVERED`
 
-4. **VM app dashboard** (if using Option A): http://localhost:8090
+4. **VM app dashboard** (if using the demo app): http://localhost:8090
    - Shows sent vs received counts and the extracted patient data
+
+5. **Run the E2E test suite:**
+   ```bash
+   # Windows
+   set SEND_ADDR=localhost:2575
+   set RECV_ADDR=:2576
+   .\vm-app.exe test
+
+   # Linux/Mac
+   SEND_ADDR=localhost:2575 RECV_ADDR=:2576 ./vm-app test
+   ```
 
 ---
 
@@ -297,11 +414,13 @@ Check the flow is working:
 
 | Symptom | Fix |
 |---------|-----|
-| `enrollment failed: invalid token` | Token may have expired or already been used. Create a new node in the dashboard. |
-| `load CA cert: no such file` | Enrollment didn't save certs. Check directory permissions on `/opt/arteria/config`. |
+| `enrollment failed: invalid token` | Token expired or used. Create a new node in the dashboard. |
+| `load CA cert: no such file` | Enrollment didn't save certs. Check directory permissions. On Docker check volume mount. |
 | Agent connects but no port listeners | Config hasn't been pushed. Go to Aorta Mesh → Push Config. |
-| Messages sent but nothing received back | Check the route's destination topic matches the output CP. Check egress logs. |
-| `address already in use :2575` | Something else is using port 2575. Kill it or change the tunnel_local_port. |
+| Messages sent but nothing received back | Check route destination_topic matches output CP. Check egress logs: `docker logs arteria-egress` |
+| `address already in use :2575` | Something else on port 2575. Change `tunnel_local_port` on the CP. |
+| Docker: can't reach host app on :2576 | Ensure `FORWARD_HOST=host.docker.internal` is set on the agent container. |
+| WSL2: can't reach Docker agent | Use the Windows host IP or `host.docker.internal` from WSL. |
 
 ---
 

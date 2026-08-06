@@ -94,31 +94,32 @@ export default function FlowPage() {
   const nodes: FlowNode[] = [];
   const edges: FlowEdge[] = [];
 
-  const totalCols = 2 + filters.length; // source + filters + dest (route is overlay on source)
-  const colWidth = 220;
-  const canvasW = Math.max(700, (totalCols + 1) * colWidth);
-  const canvasH = 400;
+  const totalCols = 2 + filters.length;
+  const colWidth = 280;
+  const canvasW = (totalCols + 1) * colWidth;
+  const canvasH = 360;
   const yMid = canvasH / 2;
+  const xOffset = colWidth / 2;
   let col = 0;
 
   // Source node
   if (srcCP) {
     const m = cpMetrics[srcCP.comm_point_id];
-    const x = 100 + col * colWidth;
-    nodes.push({ id: 'src', type: 'source', label: srcCP.name, sublabel: `${srcCP.protocol} :${srcCP.port}`, active: srcCP.is_active, count: m?.received || procReceived, errors: m?.errors || 0, x, y: yMid - 30, data: srcCP });
+    const x = xOffset + col * colWidth;
+    nodes.push({ id: 'src', type: 'source', label: srcCP.name, sublabel: `${srcCP.protocol} :${srcCP.port}`, active: srcCP.is_active, count: m?.received || procReceived, errors: m?.errors || 0, x, y: yMid - 50, data: srcCP });
     col++;
   }
 
-  // Route node (slightly offset below source)
+  // Route node (below source, offset to show connection)
   if (selectedRoute) {
-    const x = 100 + (col - 0.5) * colWidth;
-    nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: procReceived, errors: procErrors, x, y: yMid + 60, data: selectedRoute });
+    const x = xOffset + (col - 0.3) * colWidth;
+    nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: procReceived, errors: procErrors, x, y: yMid + 80, data: selectedRoute });
     if (srcCP) edges.push({ from: 'src', to: 'route' });
   }
 
   // Filter nodes
   filters.forEach((f, i) => {
-    const x = 100 + col * colWidth;
+    const x = xOffset + col * colWidth;
     const yOffset = (i % 2 === 0 ? -20 : 20);
     const id = `filter-${i}`;
     nodes.push({ id, type: 'filter', label: f.name, sublabel: f.filter_type, active: f.is_active, count: procRouted, errors: 0, x, y: yMid + yOffset, data: f });
@@ -133,7 +134,7 @@ export default function FlowPage() {
   // Destination node
   if (dstCP) {
     const m = cpMetrics[dstCP.comm_point_id];
-    const x = 100 + col * colWidth;
+    const x = xOffset + col * colWidth;
     const id = 'dest';
     nodes.push({ id, type: 'destination', label: dstCP.name, sublabel: `${dstCP.protocol} :${dstCP.port}`, active: dstCP.is_active, count: m?.sent || procRouted, errors: m?.errors || 0, x, y: yMid, data: dstCP });
     const lastFilter = filters.length > 0 ? `filter-${filters.length - 1}` : 'route';
@@ -175,9 +176,9 @@ export default function FlowPage() {
         {!selectedRoute ? (
           <div className="flex-1 flex items-center justify-center text-gray-600">Select a route</div>
         ) : (
-          <div className="flex-1 flex overflow-hidden">
-            {/* Canvas */}
-            <div className={clsx('flex-1 relative overflow-auto', 'bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]')}>
+          <div className="flex-1 flex flex-col overflow-auto">
+            {/* Flow canvas — top half */}
+            <div className={clsx('relative flex items-center justify-center h-[45vh] min-h-[280px] shrink-0 border-b border-gray-800/30 overflow-x-auto', 'bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]')}>
               {/* Ambient glow */}
               <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/20 via-transparent to-purple-950/20 pointer-events-none" />
 
@@ -189,11 +190,13 @@ export default function FlowPage() {
                 {flowMetrics.errors > 0 && <MetricChip label="ERR" value={flowMetrics.errors} color="text-red-400" />}
               </div>
 
-              {/* SVG edges */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ minWidth: canvasW, minHeight: canvasH }}>
-                <defs>
-                  <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-                </defs>
+              {/* Flow container — centred */}
+              <div className="relative" style={{ width: canvasW, height: canvasH }}>
+                {/* SVG edges */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                  <defs>
+                    <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
+                  </defs>
                 {edges.map((edge, i) => {
                   const from = nodeMap.get(edge.from);
                   const to = nodeMap.get(edge.to);
@@ -218,10 +221,9 @@ export default function FlowPage() {
                     </g>
                   );
                 })}
-              </svg>
+                </svg>
 
-              {/* Nodes */}
-              <div className="relative" style={{ minWidth: canvasW, minHeight: canvasH }}>
+                {/* Nodes */}
                 {nodes.map(node => (
                   <NodeCard
                     key={node.id}
@@ -233,10 +235,18 @@ export default function FlowPage() {
               </div>
             </div>
 
-            {/* Inspector drawer */}
-            {inspectedNode && (
-              <InspectorDrawer node={inspectedNode} onClose={() => setInspectedNode(null)} />
-            )}
+            {/* Step details — bottom half */}
+            <div className="flex-1 min-h-0 overflow-auto px-6 py-4">
+              {inspectedNode ? (
+                <InspectorPanel node={inspectedNode} onClose={() => setInspectedNode(null)} />
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {nodes.map(node => (
+                    <StepSummaryCard key={node.id} node={node} onClick={() => setInspectedNode(node)} />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -286,51 +296,82 @@ function NodeCard({ node, isSelected, onClick }: { node: FlowNode; isSelected: b
   );
 }
 
-function InspectorDrawer({ node, onClose }: { node: FlowNode; onClose: () => void }) {
+function InspectorPanel({ node, onClose }: { node: FlowNode; onClose: () => void }) {
   const theme = getNodeTheme(node.type);
   return (
-    <div className="w-80 border-l border-gray-800/50 bg-gray-900/95 backdrop-blur-xl flex flex-col overflow-hidden">
+    <div className="bg-slate-900/80 backdrop-blur border border-slate-800 rounded-xl overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800/50">
-        <div className="flex items-center gap-2">
-          <div className={clsx('w-6 h-6 rounded flex items-center justify-center', theme.iconBg)}>
-            <NodeIcon type={node.type} className={clsx('w-3.5 h-3.5', theme.iconColor)} />
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800/30">
+        <div className="flex items-center gap-3">
+          <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center', theme.iconBg)}>
+            <NodeIcon type={node.type} className={clsx('w-4 h-4', theme.iconColor)} />
           </div>
-          <span className="text-sm font-semibold text-white truncate">{node.label}</span>
+          <div>
+            <div className="text-sm font-semibold text-white">{node.label}</div>
+            <div className="text-[10px] text-gray-500">{getTypeName(node.type)}</div>
+          </div>
         </div>
         <button onClick={onClose} className="text-gray-500 hover:text-white"><X className="w-4 h-4" /></button>
       </div>
 
-      {/* Stats */}
-      <div className="px-4 py-3 border-b border-gray-800/30 space-y-2">
-        <InspectorRow label="Status" value={node.active ? 'HEALTHY' : 'INACTIVE'} badge={node.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'} />
-        <InspectorRow label="Type" value={getTypeName(node.type)} />
-        <InspectorRow label="Messages" value={node.count.toLocaleString()} mono />
-        <InspectorRow label="Protocol" value={node.sublabel} mono />
-        {node.errors > 0 && <InspectorRow label="Errors" value={node.errors.toLocaleString()} badge="bg-red-500/20 text-red-400" />}
-      </div>
+      <div className="flex flex-col lg:flex-row">
+        {/* Stats */}
+        <div className="px-5 py-3 space-y-2 lg:w-64 lg:border-r lg:border-gray-800/30">
+          <InspectorRow label="Status" value={node.active ? 'HEALTHY' : 'INACTIVE'} badge={node.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'} />
+          <InspectorRow label="Messages" value={node.count.toLocaleString()} mono />
+          <InspectorRow label="Protocol" value={node.sublabel} mono />
+          {node.errors > 0 && <InspectorRow label="Errors" value={node.errors.toLocaleString()} badge="bg-red-500/20 text-red-400" />}
+        </div>
 
-      {/* Script / payload preview */}
-      {node.type === 'filter' && node.data?.js_script && (
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <div className="px-4 pt-3 pb-1 text-[9px] text-gray-500 uppercase tracking-widest">Transform Script</div>
-          <div className="flex-1 min-h-0">
-            <MonacoEditor
-              height="100%"
-              language={node.data.filter_type === 'python' ? 'python' : 'javascript'}
-              theme="vs-dark"
-              value={node.data.js_script}
-              options={{ readOnly: true, minimap: { enabled: false }, fontSize: 11, lineNumbers: 'off', scrollBeyondLastLine: false, padding: { top: 8 } }}
-            />
+        {/* Script preview */}
+        {node.type === 'filter' && node.data?.js_script && (
+          <div className="flex-1 min-h-0 border-t lg:border-t-0 border-gray-800/30">
+            <div className="px-4 pt-2 pb-1 text-[9px] text-gray-500 uppercase tracking-widest">Transform Script</div>
+            <div className="h-48">
+              <MonacoEditor
+                height="100%"
+                language={node.data.filter_type === 'python' ? 'python' : 'javascript'}
+                theme="vs-dark"
+                value={node.data.js_script}
+                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 11, lineNumbers: 'off', scrollBeyondLastLine: false, padding: { top: 8 } }}
+              />
+            </div>
           </div>
+        )}
+        {node.type === 'route' && node.data?.description && (
+          <div className="flex-1 px-5 py-3">
+            <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Description</div>
+            <p className="text-xs text-gray-300">{node.data.description}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StepSummaryCard({ node, onClick }: { node: FlowNode; onClick: () => void }) {
+  const theme = getNodeTheme(node.type);
+  return (
+    <div
+      onClick={onClick}
+      className="bg-slate-900/60 backdrop-blur border border-slate-800 rounded-lg p-3 cursor-pointer hover:border-cyan-500/30 transition-colors"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <div className={clsx('w-6 h-6 rounded flex items-center justify-center', theme.iconBg)}>
+          <NodeIcon type={node.type} className={clsx('w-3.5 h-3.5', theme.iconColor)} />
         </div>
-      )}
-      {node.type === 'route' && node.data?.description && (
-        <div className="px-4 py-3">
-          <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">Description</div>
-          <p className="text-xs text-gray-300">{node.data.description}</p>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-white truncate">{node.label}</div>
+          <div className="text-[9px] text-gray-500">{getTypeName(node.type)}</div>
         </div>
-      )}
+        <span className={clsx('text-[9px] px-1.5 py-0.5 rounded-full font-medium', node.active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400')}>
+          {node.active ? 'OK' : 'OFF'}
+        </span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] text-gray-500 font-mono">{node.sublabel}</span>
+        <span className={clsx('text-xs font-bold font-mono tabular-nums', theme.iconColor)}>{node.count.toLocaleString()}</span>
+      </div>
     </div>
   );
 }
