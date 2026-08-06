@@ -156,15 +156,25 @@ export default function FlowPage() {
             {nodes.map((n, idx) => (
               <div key={n.id}
                 draggable={n.type === 'filter'}
-                onDragStart={(e) => { e.dataTransfer.setData('text/plain', JSON.stringify({ id: n.id, type: n.type, index: idx, filterId: n.data?.filter_id })); setDraggedNode(n.id); }}
+                onDragStart={(e) => {
+                  if (n.type !== 'filter') { e.preventDefault(); return; }
+                  e.dataTransfer.effectAllowed = 'move';
+                  e.dataTransfer.setData('application/json', JSON.stringify({ id: n.id, type: n.type, index: idx, filterId: n.data?.filter_id }));
+                  setDraggedNode(n.id);
+                }}
                 onDragEnd={() => setDraggedNode(null)}
-                onDragOver={(e) => { if (n.type === 'filter' || n.type === 'source' || n.type === 'destination') e.preventDefault(); }}
+                onDragOver={(e) => {
+                  if (n.type === 'filter' && draggedNode && draggedNode !== n.id) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }
+                }}
                 onDrop={async (e) => {
                   e.preventDefault();
+                  if (n.type !== 'filter') return;
                   try {
-                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-                    if (data.type === 'filter' && n.type === 'filter' && data.id !== n.id) {
-                      // Reorder: swap positions
+                    const data = JSON.parse(e.dataTransfer.getData('application/json'));
+                    if (data.type === 'filter' && data.id !== n.id) {
                       const newOrder = filters.map((f, i) => ({ filter_id: f.filter_id, position: i }));
                       const fromIdx = newOrder.findIndex(o => o.filter_id === data.filterId);
                       const toIdx = newOrder.findIndex(o => o.filter_id === n.data?.filter_id);
@@ -174,18 +184,17 @@ export default function FlowPage() {
                         const reordered = newOrder.map((o, i) => ({ ...o, position: i }));
                         const { reorderFilters } = await import('@/lib/api');
                         await reorderFilters(selectedRouteId, reordered);
-                        // Reload filters
                         const resp = await getFilters(selectedRouteId);
                         setFilters((resp.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
                       }
                     }
-                  } catch {}
+                  } catch (err) { console.error('Drop failed:', err); }
                   setDraggedNode(null);
                 }}
                 className={clsx('absolute w-[160px] rounded-xl border p-3 transition-all duration-200 hover:scale-[1.04] backdrop-blur-xl bg-slate-900/80 shadow-2xl',
                   n.type === 'filter' ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
-                  draggedNode === n.id ? 'ring-2 ring-cyan-400 opacity-60 scale-105' : 'border-slate-800',
-                  draggedNode && draggedNode !== n.id && n.type === 'filter' ? 'ring-1 ring-dashed ring-cyan-500/30' : '',
+                  draggedNode === n.id ? 'ring-2 ring-cyan-400 opacity-50 scale-110 z-50' : 'border-slate-800',
+                  draggedNode && draggedNode !== n.id && n.type === 'filter' ? 'ring-2 ring-dashed ring-cyan-400/50 bg-cyan-950/20' : '',
                   !n.active && 'opacity-40 grayscale')}
                 style={{ left: n.x, top: n.y }}
               >
