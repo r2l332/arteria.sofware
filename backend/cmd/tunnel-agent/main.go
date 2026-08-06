@@ -18,7 +18,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Parse --broker flag from anywhere in args
 	brokerAddr := envOr("BROKER_ADDR", "localhost:9443")
+	for i, arg := range os.Args {
+		if (arg == "--broker" || arg == "-broker") && i+1 < len(os.Args) {
+			brokerAddr = os.Args[i+1]
+		}
+	}
 	configDir := envOr("AGENT_CONFIG_DIR", "/etc/arteria-agent")
 	ackMode := envOr("ACK_MODE", "false") == "true"
 	forwardHost := envOr("FORWARD_HOST", "127.0.0.1")
