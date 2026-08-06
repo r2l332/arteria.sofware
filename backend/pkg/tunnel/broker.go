@@ -294,13 +294,21 @@ func (b *Broker) heartbeatLoop(bs *BrokerSession) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	enc := json.NewEncoder(bs.Control)
+	beatCount := 0
 
 	for {
 		select {
 		case <-ticker.C:
+			beatCount++
 			msg := ControlMessage{Type: "heartbeat", Payload: json.RawMessage(`{}`)}
 			if err := enc.Encode(msg); err != nil {
 				return
+			}
+			// Re-push config every 60s (every 4th heartbeat) to keep agent in sync
+			if beatCount%4 == 0 && b.getConfig != nil {
+				if cfg := b.getConfig(bs.NodeID); cfg != nil {
+					b.PushConfig(bs.NodeID, cfg)
+				}
 			}
 		case <-b.quit:
 			return
