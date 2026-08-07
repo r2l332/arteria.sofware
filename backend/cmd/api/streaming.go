@@ -731,41 +731,53 @@ func registerRewireRoutes(app *fiber.App, session *gocql.Session) {
 func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStreamContext, session *gocql.Session) {
 	api := app.Group("/api/v1")
 
-	// Bulk retry all DLQ errors (re-inject into ingestion)
+	// Bulk retry DLQ errors — supports org_id scoping
 	api.Post("/platform/dlq/retry-all", func(c *fiber.Ctx) error {
 		var body struct {
-			Limit int `json:"limit"`
+			Limit int    `json:"limit"`
+			OrgID string `json:"org_id"`
 		}
 		c.BodyParser(&body)
 		if body.Limit <= 0 { body.Limit = 100 }
 
-		iter := session.Query(`SELECT message_id, raw_payload FROM arteria.error_messages LIMIT ?`, body.Limit).Iter()
+		var iter *gocql.Iter
+		if body.OrgID != "" {
+			uid, _ := gocql.ParseUUID(body.OrgID)
+			iter = session.Query(`SELECT message_id, raw_payload FROM arteria.error_messages WHERE org_id = ? ALLOW FILTERING`, uid).Iter()
+		} else {
+			iter = session.Query(`SELECT message_id, raw_payload FROM arteria.error_messages LIMIT ?`, body.Limit).Iter()
+		}
 		var msgID gocql.UUID
 		var rawPayload string
 		retried, failed := 0, 0
 		for iter.Scan(&msgID, &rawPayload) {
 			if rawPayload == "" { continue }
 			_, err := js.Publish("arteria.ingest.raw", []byte(rawPayload))
-			if err != nil {
-				failed++
-				continue
-			}
+			if err != nil { failed++; continue }
 			session.Query(`DELETE FROM arteria.error_messages WHERE message_id = ?`, msgID).Exec()
 			session.Query(`UPDATE arteria.messages SET status = ?, updated_at = ? WHERE message_id = ?`, "RETRYING", time.Now(), msgID).Exec()
 			retried++
+			if retried+failed >= body.Limit { break }
 		}
 		iter.Close()
-		return c.JSON(fiber.Map{"retried": retried, "failed": failed})
+		return c.JSON(fiber.Map{"retried": retried, "failed": failed, "org_id": body.OrgID})
 	})
 
-	// Bulk drop all DLQ errors
+	// Bulk drop DLQ errors — supports org_id scoping
 	api.Post("/platform/dlq/drop-all", func(c *fiber.Ctx) error {
 		var body struct {
 			Reason string `json:"reason"`
+			OrgID  string `json:"org_id"`
 		}
 		c.BodyParser(&body)
 
-		iter := session.Query(`SELECT message_id FROM arteria.error_messages`).Iter()
+		var iter *gocql.Iter
+		if body.OrgID != "" {
+			uid, _ := gocql.ParseUUID(body.OrgID)
+			iter = session.Query(`SELECT message_id FROM arteria.error_messages WHERE org_id = ? ALLOW FILTERING`, uid).Iter()
+		} else {
+			iter = session.Query(`SELECT message_id FROM arteria.error_messages`).Iter()
+		}
 		var msgID gocql.UUID
 		dropped := 0
 		for iter.Scan(&msgID) {
@@ -775,20 +787,28 @@ func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStrea
 			dropped++
 		}
 		iter.Close()
-		return c.JSON(fiber.Map{"dropped": dropped, "reason": body.Reason})
+		return c.JSON(fiber.Map{"dropped": dropped, "reason": body.Reason, "org_id": body.OrgID})
 	})
 
-	// Get DLQ summary (count, oldest, newest)
+	// Get DLQ summary — optionally scoped by org_id query param
 	api.Get("/platform/dlq/summary", func(c *fiber.Ctx) error {
-		var count int
-		session.Query(`SELECT COUNT(*) FROM arteria.error_messages`).Scan(&count)
+		orgID := c.Query("org_id", "")
 
 		var oldest, newest time.Time
 		var errTypes = make(map[string]int)
-		iter := session.Query(`SELECT error_type, created_at FROM arteria.error_messages`).Iter()
+		var count int
+
+		var iter *gocql.Iter
+		if orgID != "" {
+			uid, _ := gocql.ParseUUID(orgID)
+			iter = session.Query(`SELECT error_type, created_at FROM arteria.error_messages WHERE org_id = ? ALLOW FILTERING`, uid).Iter()
+		} else {
+			iter = session.Query(`SELECT error_type, created_at FROM arteria.error_messages`).Iter()
+		}
 		var errType string
 		var createdAt time.Time
 		for iter.Scan(&errType, &createdAt) {
+			count++
 			errTypes[errType]++
 			if oldest.IsZero() || createdAt.Before(oldest) { oldest = createdAt }
 			if newest.IsZero() || createdAt.After(newest) { newest = createdAt }
@@ -797,7 +817,7 @@ func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStrea
 
 		return c.JSON(fiber.Map{
 			"count": count, "error_types": errTypes,
-			"oldest": oldest, "newest": newest,
+			"oldest": oldest, "newest": newest, "org_id": orgID,
 		})
 	})
 

@@ -54,6 +54,8 @@ export default function PlatformPage() {
   const [audit, setAudit] = useState<Array<Record<string, string>>>([]);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState('');
+  const [orgs, setOrgs] = useState<Array<{ org_id: string; name: string }>>([]);
+  const [selectedOrg, setSelectedOrg] = useState('');
 
   const fetchApi = useCallback(async (path: string) => {
     try { return await apiFetch<Record<string, unknown>>(path); }
@@ -65,7 +67,10 @@ export default function PlatformPage() {
     catch { return null; }
   }, []);
 
-  useEffect(() => { loadTab(activeTab); }, [activeTab]);
+  useEffect(() => {
+    fetchApi('/organisations').then(d => setOrgs(((d as Record<string, unknown>)?.organisations || []) as Array<{ org_id: string; name: string }>));
+    loadTab(activeTab);
+  }, [activeTab]);
 
   const loadTab = async (tab: string) => {
     setLoading(true);
@@ -96,7 +101,8 @@ export default function PlatformPage() {
         break;
       }
       case 'dlq': {
-        const d = await fetchApi('/platform/dlq/summary');
+        const orgParam = selectedOrg ? `?org_id=${selectedOrg}` : '';
+        const d = await fetchApi(`/platform/dlq/summary${orgParam}`);
         setDlq((d as unknown as DLQSummary) || { count: 0, error_types: {}, oldest: '', newest: '' });
         break;
       }
@@ -110,14 +116,15 @@ export default function PlatformPage() {
   };
 
   const retryAllDLQ = async () => {
-    const data = await postApi('/platform/dlq/retry-all', { limit: 100 });
-    setActionMsg(`Retried ${(data as Record<string, number>)?.retried || 0} messages`);
+    const data = await postApi('/platform/dlq/retry-all', { limit: 100, org_id: selectedOrg || undefined });
+    setActionMsg(`Retried ${(data as Record<string, number>)?.retried || 0} messages${selectedOrg ? ' (org-scoped)' : ''}`);
     loadTab('dlq');
   };
 
   const dropAllDLQ = async () => {
-    if (!confirm('Drop ALL DLQ messages? This cannot be undone.')) return;
-    const data = await postApi('/platform/dlq/drop-all', { reason: 'Bulk drop from admin panel' });
+    const scope = selectedOrg ? 'this organisation' : 'ALL organisations';
+    if (!confirm(`Drop DLQ messages for ${scope}? This cannot be undone.`)) return;
+    const data = await postApi('/platform/dlq/drop-all', { reason: 'Bulk drop from admin panel', org_id: selectedOrg || undefined });
     setActionMsg(`Dropped ${(data as Record<string, number>)?.dropped || 0} messages`);
     loadTab('dlq');
   };
@@ -339,10 +346,17 @@ export default function PlatformPage() {
           {activeTab === 'dlq' && !loading && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Dead Letter Queue Management</h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Dead Letter Queue</h2>
+                  <select value={selectedOrg} onChange={(e) => { setSelectedOrg(e.target.value); setTimeout(() => loadTab('dlq'), 100); }}
+                    className="bg-arteria-bg border border-arteria-border rounded px-2 py-1 text-xs text-white">
+                    <option value="">All Organisations</option>
+                    {orgs.map(o => <option key={o.org_id} value={o.org_id}>{o.name}</option>)}
+                  </select>
+                </div>
                 <div className="flex gap-2">
-                  <button onClick={retryAllDLQ} className="px-3 py-1.5 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-500">Retry All ({dlq.count})</button>
-                  <button onClick={dropAllDLQ} className="px-3 py-1.5 text-xs bg-red-700 text-white rounded hover:bg-red-600">Drop All</button>
+                  <button onClick={retryAllDLQ} className="px-3 py-1.5 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-500">Retry {selectedOrg ? 'Org' : 'All'} ({dlq.count})</button>
+                  <button onClick={dropAllDLQ} className="px-3 py-1.5 text-xs bg-red-700 text-white rounded hover:bg-red-600">Drop {selectedOrg ? 'Org' : 'All'}</button>
                   <button onClick={() => loadTab('dlq')} className="px-3 py-1.5 text-xs bg-arteria-accent text-white rounded hover:bg-arteria-accent/80">Refresh</button>
                 </div>
               </div>

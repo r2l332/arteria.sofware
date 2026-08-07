@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS arteria.routes (
     fan_out_config text,
     default_properties text,
     next_route_id uuid,
+    org_id uuid,
     created_at timestamp,
     updated_at timestamp,
     PRIMARY KEY (route_id)
@@ -117,8 +118,11 @@ CREATE TABLE IF NOT EXISTS arteria.messages (
     updated_at timestamp,
     error_details text,
     retry_count int,
+    org_id uuid,
     PRIMARY KEY (message_id)
 );
+
+CREATE INDEX IF NOT EXISTS ON arteria.messages (org_id);
 
 CREATE TABLE IF NOT EXISTS arteria.messages_by_patient (
     patient_id text,
@@ -149,6 +153,9 @@ CREATE TABLE IF NOT EXISTS arteria.error_messages (
     raw_payload text,
     retry_count int,
     max_retries int,
+    org_id uuid,
     created_at timestamp,
     PRIMARY KEY (message_id)
 );
+
+CREATE INDEX IF NOT EXISTS ON arteria.error_messages (org_id);
