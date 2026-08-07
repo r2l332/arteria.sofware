@@ -87,12 +87,13 @@ export default function Sidebar() {
   const isPlatformRole = role === 'super_admin' || role === 'devops';
 
   const visibleNav = allNav.filter(item => {
-    // super_admin/devops ONLY see platform admin
+    // super_admin/devops see platform admin + management pages
     if (isPlatformRole) {
-      return item.href === '/platform';
+      const platformPages = ['/platform', '/organisations', '/users', '/settings', '/tunnel', '/messages-internal'];
+      return platformPages.includes(item.href);
     }
     if (!item.module) return true;
-    if (item.module === 'super_admin_only') return false; // org users never see this
+    if (item.module === 'super_admin_only') return false;
     if (item.module === 'rbac') return role === 'admin' || role === 'security';
     if (item.module === 'platform') return role === 'admin';
     return modules[item.module];
