@@ -134,6 +134,9 @@ func startNATSBridge(nc *nats.Conn, hub *WSHub) {
 			var te TraceEvent
 			json.Unmarshal(msg.Data, &te)
 			event.Data = te
+		case len(parts) >= 3 && parts[2] == "config":
+			event.Type = "config_change"
+			event.Data = json.RawMessage(msg.Data)
 		default:
 			event.Type = "event"
 			event.Data = json.RawMessage(msg.Data)

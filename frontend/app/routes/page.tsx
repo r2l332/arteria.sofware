@@ -51,6 +51,10 @@ export default function RoutesPage() {
   useEffect(() => {
     loadRoutes();
     getCommPoints().then((r) => setCommPoints(r.communication_points)).catch(console.error);
+    // Auto-reload on config changes via WebSocket
+    const handler = () => { loadRoutes(); };
+    window.addEventListener('arteria:config_change', handler);
+    return () => window.removeEventListener('arteria:config_change', handler);
   }, []);
 
   const selectRoute = async (route: Route) => {

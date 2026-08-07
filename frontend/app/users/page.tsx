@@ -133,7 +133,7 @@ export default function UsersPage() {
                       </td>
                       <td className="py-3 px-5">
                         <button onClick={() => toggleActive(u.user_id, u.is_active)} className="cursor-pointer">
-                          <StatusBadge status={u.is_active ? 'CONNECTED' : 'DISCONNECTED'} />
+                          <StatusBadge status={u.is_active ? 'ACTIVE' : 'DISABLED'} />
                         </button>
                       </td>
                       <td className="py-3 px-5 text-xs text-arteria-muted">

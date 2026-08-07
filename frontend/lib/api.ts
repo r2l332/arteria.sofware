@@ -163,13 +163,19 @@ export function connectFlowWebSocket(onMessage: (event: StreamEvent) => void): W
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${window.location.host}/ws/flow`);
   ws.onmessage = (e) => {
-    try { onMessage(JSON.parse(e.data)); } catch {}
+    try {
+      const event = JSON.parse(e.data) as StreamEvent;
+      onMessage(event);
+      if (event.type === 'config_change') {
+        window.dispatchEvent(new CustomEvent('arteria:config_change', { detail: event.data }));
+      }
+    } catch {}
   };
   return ws;
 }
 
 export interface StreamEvent {
-  type: 'message' | 'error' | 'metric' | 'trace' | 'event';
+  type: 'message' | 'error' | 'metric' | 'trace' | 'event' | 'config_change';
   timestamp: string;
   data: any;
 }

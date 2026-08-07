@@ -28,6 +28,7 @@ import (
 )
 
 var sessionTracker *auth.SessionTracker
+var natsConn *nats.Conn // Package-level for config change events
 
 func main() {
 	log, err := logging.FromEnv("api")
@@ -48,6 +49,7 @@ func main() {
 		log.Fatal("failed to connect to NATS", logging.Fields{"error": err.Error()})
 	}
 	defer nc.Close()
+	natsConn = nc
 
 	scyllaCfg := scyllautil.DefaultConfig()
 	scyllaCfg.Hosts = strings.Split(scyllaHost, ",")
@@ -583,6 +585,7 @@ func createRoute(session *gocql.Session) fiber.Handler {
 		now := time.Now()
 		session.Query(`INSERT INTO arteria.routes (route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
 			id, p.Name, p.Description, srcCP, dstCP, p.SourceTopic, p.DestTopic, p.IsActive, now, now).Exec()
+		publishConfigChange(natsConn, "route", "created", id.String())
 		return c.Status(201).JSON(fiber.Map{"route_id": id.String()})
 	}
 }
@@ -619,6 +622,7 @@ func updateRoute(session *gocql.Session) fiber.Handler {
 
 		session.Query(`UPDATE arteria.routes SET name=?, description=?, source_comm_point_id=?, dest_comm_point_id=?, source_topic=?, destination_topic=?, is_active=?, fan_out_cp_ids=?, updated_at=? WHERE route_id=?`,
 			p.Name, p.Description, srcCP, dstCP, p.SourceTopic, p.DestTopic, p.IsActive, fanOutIDs, time.Now(), id).Exec()
+		publishConfigChange(natsConn, "route", "updated", id.String())
 		return c.JSON(fiber.Map{"status": "updated"})
 	}
 }
@@ -630,6 +634,7 @@ func deleteRoute(session *gocql.Session) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid ID"})
 		}
 		session.Query(`DELETE FROM arteria.routes WHERE route_id=?`, id).Exec()
+		publishConfigChange(natsConn, "route", "deleted", id.String())
 		return c.JSON(fiber.Map{"status": "deleted"})
 	}
 }
@@ -689,6 +694,7 @@ func createFilter(session *gocql.Session) fiber.Handler {
 		session.Query(`INSERT INTO arteria.filters_by_id (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
 			fID, routeID, p.Name, p.FilterType, p.Order, p.JSScript, p.ConfigJSON, p.IsActive, now).Exec()
 
+		publishConfigChange(natsConn, "filter", "created", fID.String())
 		return c.Status(201).JSON(fiber.Map{"filter_id": fID.String()})
 	}
 }
@@ -1615,6 +1621,12 @@ func deleteTunnelNode(session *gocql.Session) fiber.Handler {
 // The broker reads all CPs linked to this node and pushes the mappings.
 func pushTunnelConfig(nc *nats.Conn, nodeID string) {
 	nc.Publish("arteria.tunnel.config-push", []byte(nodeID))
+}
+
+// publishConfigChange notifies WebSocket clients that config has changed.
+func publishConfigChange(nc *nats.Conn, entity, action, id string) {
+	data, _ := json.Marshal(map[string]string{"entity": entity, "action": action, "id": id})
+	nc.Publish("arteria.events.config", data)
 }
 
 func pushTunnelConfigHandler(session *gocql.Session, nc *nats.Conn) fiber.Handler {

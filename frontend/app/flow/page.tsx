@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
 import {
   getRoutes, getFilters, getCommPoints, getRouteRecent, getMessageTrace,
-  dropMessage, retryMessage, flushRoute, testFilter, connectFlowWebSocket,
+  dropMessage, retryMessage, flushRoute, testFilter, connectFlowWebSocket, apiFetch,
   type Route, type Filter, type CommPoint, type StreamEvent, type TraceStep,
 } from '@/lib/api';
 import { Radio, GitBranch, Cpu, Send, Activity, Trash2, RotateCcw, X, GripVertical } from 'lucide-react';
@@ -38,18 +38,26 @@ export default function FlowPage() {
   const [testPayload, setTestPayload] = useState('');
   const [testResult, setTestResult] = useState('');
   const [recentMsgs, setRecentMsgs] = useState<any[]>([]);
+  const [nodeMessages, setNodeMessages] = useState<any[]>([]);
+  const [nodeMessagesLabel, setNodeMessagesLabel] = useState('');
+  const [inspectingMsg, setInspectingMsg] = useState<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const counts = useRef({ received: 0, routed: 0, errors: 0 });
 
   useEffect(() => {
-    Promise.all([
-      getRoutes().catch(() => ({ routes: [], count: 0 })),
-      getCommPoints().catch(() => ({ communication_points: [], count: 0 })),
-    ]).then(([r, c]) => {
-      setRoutes(r.routes || []);
-      setCommPoints(c.communication_points || []);
-      if (r.routes?.length > 0) setSelectedRouteId(r.routes[0].route_id);
-    });
+    const loadConfig = () => {
+      Promise.all([
+        getRoutes().catch(() => ({ routes: [], count: 0 })),
+        getCommPoints().catch(() => ({ communication_points: [], count: 0 })),
+      ]).then(([r, c]) => {
+        setRoutes(r.routes || []);
+        setCommPoints(c.communication_points || []);
+        if (r.routes?.length > 0 && !selectedRouteId) setSelectedRouteId(r.routes[0].route_id);
+      });
+    };
+    loadConfig();
+    window.addEventListener('arteria:config_change', loadConfig);
+    return () => window.removeEventListener('arteria:config_change', loadConfig);
   }, []);
 
   useEffect(() => {
@@ -100,6 +108,24 @@ export default function FlowPage() {
   const openTrace = async (msgId: string) => {
     const r = await getMessageTrace(msgId).catch(() => null);
     if (r) { setTracedMsg(r.message); setTraceSteps(r.steps); }
+  };
+
+  const openNodeMessages = async (node: any) => {
+    setNodeMessagesLabel(`${node.label} (${node.type})`);
+    // Fetch recent messages — use route's recent endpoint or general messages
+    try {
+      const msgs = await apiFetch<{ messages: any[] }>(`/routes/${selectedRouteId}/recent?limit=20`);
+      setNodeMessages(msgs.messages || []);
+    } catch {
+      setNodeMessages([]);
+    }
+  };
+
+  const inspectMessage = async (msgId: string) => {
+    try {
+      const detail = await apiFetch<any>(`/messages/${msgId}`);
+      setInspectingMsg(detail);
+    } catch {}
   };
 
   const moveFilterUp = async (idx: number) => {
@@ -221,10 +247,11 @@ export default function FlowPage() {
                   )}
                 </div>
                 <div className="flex items-center justify-between">
-                  <div className={clsx('text-center flex-1 py-1 rounded-lg', getBg(n.type))}>
+                  <button onClick={() => openNodeMessages(n)}
+                    className={clsx('text-center flex-1 py-1 rounded-lg cursor-pointer hover:ring-1 hover:ring-cyan-500/50 transition-all', getBg(n.type))}>
                     <span className={clsx('text-sm font-bold font-mono tabular-nums', getColor(n.type))}>{n.count.toLocaleString()}</span>
                     <span className="text-[7px] text-gray-500 ml-1">msgs</span>
-                  </div>
+                  </button>
                   {n.type === 'filter' && (
                     <button onClick={() => { setTestingFilter(n.data); setTestPayload(JSON.stringify({ messageId: '', rawPayload: '', properties: {} }, null, 2)); }}
                       className="ml-2 text-[8px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded hover:bg-amber-500/20">Test</button>
@@ -265,7 +292,11 @@ export default function FlowPage() {
 
           {/* Right panel */}
           <div className="w-[360px] flex flex-col overflow-hidden bg-gray-900/40">
-            {testingFilter ? (
+            {inspectingMsg ? (
+              <MessageInspectPanel msg={inspectingMsg} onClose={() => setInspectingMsg(null)} />
+            ) : nodeMessages.length > 0 ? (
+              <NodeMessagesPanel label={nodeMessagesLabel} messages={nodeMessages} onClose={() => setNodeMessages([])} onInspect={inspectMessage} onTrace={openTrace} />
+            ) : testingFilter ? (
               <FilterTestPanel filter={testingFilter} payload={testPayload} result={testResult}
                 onPayloadChange={setTestPayload} onClose={() => setTestingFilter(null)}
                 onRun={async () => { const r = await testFilter(testingFilter.filter_id, testPayload).catch(e => ({ error: e.message })); setTestResult(JSON.stringify(r, null, 2)); }} />
@@ -357,3 +388,59 @@ function NIcon({ type, className }: { type: string; className?: string }) {
 
 function getBg(t: string) { return { source: 'bg-sky-500/10', route: 'bg-purple-500/10', filter: 'bg-amber-500/10', destination: 'bg-emerald-500/10' }[t] || 'bg-gray-500/10'; }
 function getColor(t: string) { return { source: 'text-sky-400', route: 'text-purple-400', filter: 'text-amber-400', destination: 'text-emerald-400' }[t] || 'text-gray-400'; }
+
+function NodeMessagesPanel({ label, messages, onClose, onInspect, onTrace }: { label: string; messages: any[]; onClose: () => void; onInspect: (id: string) => void; onTrace: (id: string) => void }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 border-b border-gray-800/30 flex items-center justify-between shrink-0">
+        <span className="text-[10px] text-cyan-400 uppercase tracking-widest">{label}</span>
+        <button onClick={onClose} className="text-gray-500 hover:text-white text-xs">✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {messages.length === 0 ? (
+          <div className="p-4 text-center text-gray-600 text-xs">No messages found</div>
+        ) : messages.map((m: any, i: number) => (
+          <div key={m.message_id || i} className="px-4 py-2 border-b border-gray-800/15 hover:bg-gray-800/30 cursor-pointer text-[11px]"
+            onClick={() => onInspect(m.message_id)}>
+            <div className="flex items-center justify-between">
+              <span className="text-gray-300 font-mono">{m.message_type}^{m.trigger_event}</span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded ${m.status === 'ROUTED' ? 'bg-green-900/30 text-green-400' : m.status === 'ERROR' ? 'bg-red-900/30 text-red-400' : 'bg-gray-800 text-gray-400'}`}>{m.status}</span>
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-gray-500">{m.patient_id || '—'}</span>
+              <span className="text-gray-600">{m.sending_facility}</span>
+              <button onClick={(e) => { e.stopPropagation(); onTrace(m.message_id); }} className="ml-auto text-[8px] text-purple-400 hover:text-purple-300">Trace</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MessageInspectPanel({ msg, onClose }: { msg: any; onClose: () => void }) {
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 border-b border-gray-800/30 flex items-center justify-between shrink-0">
+        <span className="text-[10px] text-emerald-400 uppercase tracking-widest">Message Detail</span>
+        <button onClick={onClose} className="text-gray-500 hover:text-white text-xs">✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="grid grid-cols-2 gap-2 text-[10px]">
+          <div><span className="text-gray-500">Status</span><div className="text-white font-medium">{msg.status}</div></div>
+          <div><span className="text-gray-500">Type</span><div className="text-white font-mono">{msg.message_type}^{msg.trigger_event}</div></div>
+          <div><span className="text-gray-500">Patient</span><div className="text-white">{msg.patient_id || '—'}</div></div>
+          <div><span className="text-gray-500">Facility</span><div className="text-white">{msg.sending_facility}</div></div>
+        </div>
+        <div>
+          <span className="text-[9px] text-gray-500 uppercase">Raw Payload</span>
+          <pre className="mt-1 p-2 bg-black rounded text-[9px] text-green-400 font-mono overflow-x-auto max-h-32 whitespace-pre-wrap">{msg.raw_payload || '—'}</pre>
+        </div>
+        <div>
+          <span className="text-[9px] text-gray-500 uppercase">Transformed</span>
+          <pre className="mt-1 p-2 bg-black rounded text-[9px] text-cyan-400 font-mono overflow-x-auto max-h-48 whitespace-pre-wrap">{(() => { try { return JSON.stringify(JSON.parse(msg.transformed_payload || ''), null, 2); } catch { return msg.transformed_payload || '—'; } })()}</pre>
+        </div>
+      </div>
+    </div>
+  );
+}
