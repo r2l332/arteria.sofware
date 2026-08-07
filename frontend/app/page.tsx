@@ -1,16 +1,27 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, StatusBadge, PageHeader, EmptyState } from '@/components/ui';
 import { getStats, getMessages, getErrors, getMetrics, type Stats, type Message, type ErrorMessage, type LiveMetrics } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { MessageSquare, GitBranch, AlertTriangle, ArrowUpRight, ArrowDownRight, Zap, Database, Activity } from 'lucide-react';
 
 export default function DashboardPage() {
+  const { role } = useAuth();
+  const router = useRouter();
   const [stats, setStats] = useState<Stats | null>(null);
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [recentErrors, setRecentErrors] = useState<ErrorMessage[]>([]);
+
+  useEffect(() => {
+    if (role === 'super_admin' || role === 'devops') {
+      router.replace('/platform');
+      return;
+    }
+  }, [role, router]);
 
   useEffect(() => {
     const load = async () => {
