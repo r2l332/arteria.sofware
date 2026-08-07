@@ -3,191 +3,43 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { StatCard, StatusBadge, PageHeader, EmptyState } from '@/components/ui';
-import { getStats, getMessages, getErrors, getMetrics, apiFetch, type Stats, type Message, type ErrorMessage, type LiveMetrics } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
-import { MessageSquare, GitBranch, AlertTriangle, Activity, ArrowUpRight, ArrowDownRight, Zap, Database, Server, Shield, Building2 } from 'lucide-react';
-
-interface PlatformHealth {
-  status: string;
-  components: Record<string, { status: string; latency_ms?: number; details?: string }>;
-  tunnel_nodes?: { total: number; connected: number };
-  orgs?: { total: number };
-  users?: { total: number; online: number };
-}
-
-interface OrgUsage {
-  org_id: string;
-  name: string;
-  slug: string;
-  total_messages: number;
-  users: number;
-  comm_points: number;
-  messages_24h?: number;
-  messages_7d?: number;
-  messages_30d?: number;
-  tunnel_nodes?: number;
-}
-
-interface PlatformUsage {
-  total_messages: number;
-  organisations: OrgUsage[];
-}
+import { getStats, getMessages, getErrors, getMetrics, type Stats, type Message, type ErrorMessage, type LiveMetrics } from '@/lib/api';
+import { MessageSquare, GitBranch, AlertTriangle, ArrowUpRight, ArrowDownRight, Zap, Database, Activity } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { role } = useAuth();
-  const isPlatform = role === 'super_admin' || role === 'devops';
   const [stats, setStats] = useState<Stats | null>(null);
   const [metrics, setMetrics] = useState<LiveMetrics | null>(null);
   const [recentMessages, setRecentMessages] = useState<Message[]>([]);
   const [recentErrors, setRecentErrors] = useState<ErrorMessage[]>([]);
-  const [health, setHealth] = useState<PlatformHealth | null>(null);
-  const [usage, setUsage] = useState<PlatformUsage | null>(null);
 
   useEffect(() => {
     const load = async () => {
       getStats().then(setStats).catch(() => {});
       getMetrics().then(setMetrics).catch(() => {});
-
-      if (isPlatform) {
-        apiFetch<PlatformHealth>('/platform/health').then(setHealth).catch(() => {});
-        apiFetch<PlatformUsage>('/platform/usage').then(setUsage).catch(() => {});
-      } else {
-        getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
-        getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
-      }
+      getMessages(10).then(m => setRecentMessages(m.messages)).catch(() => {});
+      getErrors(5).then(e => setRecentErrors(e.errors)).catch(() => {});
     };
     load();
     const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
-  }, [isPlatform]);
+  }, []);
 
   return (
     <div className="flex h-screen bg-arteria-bg">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
-        <PageHeader title={isPlatform ? "Platform Overview" : "Dashboard"} description={isPlatform ? "System health and organisation metrics" : "Real-time system overview"} />
+        <PageHeader title="Dashboard" description="Real-time system overview" />
 
         <div className="p-8 space-y-6">
           {/* Stats Cards */}
-          {isPlatform ? (
-            <div className="grid grid-cols-4 gap-4">
-              <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All orgs" />
-              <StatCard label="Organisations" value={health?.orgs?.total ?? '—'} icon={Building2} subtitle="Active" />
-              <StatCard label="Users" value={health?.users?.total ?? '—'} icon={Activity} subtitle={`${health?.users?.online ?? 0} online`} />
-              <StatCard label="Capillary Nodes" value={health?.tunnel_nodes?.total ?? '—'} icon={Shield} subtitle={`${health?.tunnel_nodes?.connected ?? 0} connected`} />
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4">
-              <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All time" />
-              <StatCard label="Active Routes" value={stats?.total_routes ?? '—'} icon={GitBranch} subtitle="Configured" />
-              <StatCard label="Errors" value={stats?.total_errors ?? '—'} icon={AlertTriangle} subtitle="Total failures" />
-            </div>
-          )}
+          <div className="grid grid-cols-3 gap-4">
+            <StatCard label="Total Messages" value={stats?.total_messages ?? '—'} icon={MessageSquare} subtitle="All time" />
+            <StatCard label="Active Routes" value={stats?.total_routes ?? '—'} icon={GitBranch} subtitle="Configured" />
+            <StatCard label="Errors" value={stats?.total_errors ?? '—'} icon={AlertTriangle} subtitle="Total failures" />
+          </div>
 
-          {/* Platform Health (super_admin only) */}
-          {isPlatform && health && (
-            <div className="card">
-              <div className="card-header flex items-center gap-2">
-                <Server size={16} className="text-arteria-muted" />
-                <span className="text-sm font-medium text-white">Platform Health</span>
-                <span className={`ml-auto badge ${health.status === 'healthy' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                  {health.status}
-                </span>
-              </div>
-              <div className="p-5 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                {Object.entries(health.components || {}).map(([name, comp]) => (
-                  <div key={name} className="bg-arteria-bg rounded-lg p-3 border border-arteria-border">
-                    <div className="flex items-center gap-2 mb-1">
-                      <div className={`w-2 h-2 rounded-full ${comp.status === 'up' ? 'bg-green-400' : 'bg-red-400'}`} />
-                      <span className="text-xs font-medium text-white capitalize">{name}</span>
-                    </div>
-                    {comp.latency_ms !== undefined && (
-                      <p className="text-2xs text-arteria-muted">{comp.latency_ms}ms latency</p>
-                    )}
-                    {comp.details && <p className="text-2xs text-arteria-muted">{comp.details}</p>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Per-Org Usage (billing metrics) */}
-          {isPlatform && usage && usage.organisations.length > 0 && (
-            <div className="card">
-              <div className="card-header flex items-center gap-2">
-                <Building2 size={16} className="text-arteria-muted" />
-                <span className="text-sm font-medium text-white">Organisation Usage</span>
-                <span className="ml-auto text-2xs text-arteria-muted">{usage.total_messages.toLocaleString()} total messages</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-arteria-border">
-                      <th className="text-left py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Organisation</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">24h</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">7 days</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">30 days</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">All Time</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Users</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">CPs</th>
-                      <th className="text-right py-3 px-5 text-arteria-muted text-2xs font-medium uppercase tracking-wider">Capillaries</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usage.organisations.map(org => (
-                      <tr key={org.org_id} className="border-b border-arteria-border/50 hover:bg-white/[0.015]">
-                        <td className="py-3 px-5">
-                          <div>
-                            <span className="text-white font-medium">{org.name}</span>
-                            <span className="text-2xs text-arteria-muted ml-2 font-mono">{org.slug}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_24h ?? 0).toLocaleString()}</td>
-                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_7d ?? 0).toLocaleString()}</td>
-                        <td className="py-3 px-5 text-right text-white font-mono text-xs">{(org.messages_30d ?? 0).toLocaleString()}</td>
-                        <td className="py-3 px-5 text-right text-arteria-accent font-mono text-xs font-medium">{org.total_messages.toLocaleString()}</td>
-                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.users}</td>
-                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.comm_points}</td>
-                        <td className="py-3 px-5 text-right text-xs text-arteria-muted">{org.tunnel_nodes ?? 0}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* System Resources (platform only) */}
-          {isPlatform && health && (
-            <div className="card">
-              <div className="card-header flex items-center gap-2">
-                <Server size={16} className="text-arteria-muted" />
-                <span className="text-sm font-medium text-white">System Resources</span>
-              </div>
-              <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
-                {(health as any).resources && Object.entries((health as any).resources as Record<string, { used: number; total: number; unit: string; percent: number }>).map(([name, res]) => (
-                  <div key={name} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-white capitalize">{name}</span>
-                      <span className="text-2xs text-arteria-muted">{res.used}{res.unit} / {res.total}{res.unit}</span>
-                    </div>
-                    <div className="w-full bg-arteria-bg rounded-full h-2">
-                      <div className={`h-2 rounded-full transition-all ${
-                        res.percent > 90 ? 'bg-red-500' : res.percent > 70 ? 'bg-yellow-500' : 'bg-green-500'
-                      }`} style={{ width: `${Math.min(res.percent, 100)}%` }} />
-                    </div>
-                    <p className="text-2xs text-arteria-muted text-right">{res.percent.toFixed(1)}%</p>
-                  </div>
-                ))}
-                {!(health as any).resources && (
-                  <p className="text-xs text-arteria-muted col-span-4">Resource metrics loading...</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Live Throughput (org users only) */}
-          {!isPlatform && metrics && (
+          {/* Live Throughput */}
+          {metrics && (
             <div className="grid grid-cols-2 gap-4">
               {metrics.ingestion && (
                 <div className="card">
@@ -268,8 +120,7 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Recent Messages (org users only) */}
-          {!isPlatform && (
+          {/* Recent Messages */}
           <div className="card">
             <div className="card-header flex items-center justify-between">
               <h3 className="text-sm font-medium text-white">Recent Messages</h3>
@@ -305,10 +156,9 @@ export default function DashboardPage() {
               )}
             </div>
           </div>
-          )}
 
-          {/* Recent Errors (org users only) */}
-          {!isPlatform && recentErrors.length > 0 && (
+          {/* Recent Errors */}
+          {recentErrors.length > 0 && (
             <div className="card border-red-500/20">
               <div className="card-header flex items-center justify-between">
                 <div className="flex items-center gap-2">

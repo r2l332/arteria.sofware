@@ -87,14 +87,9 @@ export default function Sidebar() {
   const isPlatformRole = role === 'super_admin' || role === 'devops';
 
   const visibleNav = allNav.filter(item => {
-    // Platform roles only see platform-relevant pages
-    if (isPlatformRole) {
-      const platformPages = ['/', '/organisations', '/users', '/settings', '/tunnel', '/messages-internal'];
-      return platformPages.includes(item.href);
-    }
     if (!item.module) return true;
     if (item.module === 'rbac') return role === 'admin' || role === 'security' || role === 'super_admin';
-    if (item.module === 'platform') return role === 'super_admin' || role === 'admin';
+    if (item.module === 'platform') return role === 'super_admin' || role === 'admin' || role === 'devops';
     return modules[item.module];
   });
   const coreItems = visibleNav.filter(i => i.section === 'core');
