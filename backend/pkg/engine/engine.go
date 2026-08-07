@@ -75,6 +75,7 @@ type Route struct {
 	DefaultProperties  map[string]string // Injected into every message before the filter chain
 	DefaultPropsRaw    string            // Raw JSON from DB
 	NextRouteID        *gocql.UUID       // If set, forward to this route after completion
+	OrgID              *gocql.UUID       // Owning organisation
 }
 
 // ConnectorConfig defines an outbound call made mid-filter-chain.
@@ -466,11 +467,12 @@ func (e *Engine) evaluateCondition(ctx context.Context, entry FanOutEntry, envel
 
 func (e *Engine) loadRoutes() ([]Route, error) {
 	var routes []Route
-	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, fan_out_cp_ids, fan_out_config, default_properties, next_route_id FROM arteria.routes`).Iter()
+	iter := e.session.Query(`SELECT route_id, name, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, fan_out_cp_ids, fan_out_config, default_properties, next_route_id, org_id FROM arteria.routes`).Iter()
 
 	var r Route
 	var nextRouteID *gocql.UUID
-	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive, &r.FanOutCPIDs, &r.FanOutConfigRaw, &r.DefaultPropsRaw, &nextRouteID) {
+	var orgID *gocql.UUID
+	for iter.Scan(&r.RouteID, &r.Name, &r.SourceCommPoint, &r.DestCommPoint, &r.SourceTopic, &r.DestinationTopic, &r.IsActive, &r.FanOutCPIDs, &r.FanOutConfigRaw, &r.DefaultPropsRaw, &nextRouteID, &orgID) {
 		if r.FanOutConfigRaw != "" {
 			json.Unmarshal([]byte(r.FanOutConfigRaw), &r.FanOutConfig)
 		} else {
@@ -482,9 +484,11 @@ func (e *Engine) loadRoutes() ([]Route, error) {
 			r.DefaultProperties = nil
 		}
 		r.NextRouteID = nextRouteID
+		r.OrgID = orgID
 		routes = append(routes, r)
 		r = Route{}
 		nextRouteID = nil
+		orgID = nil
 	}
 	return routes, iter.Close()
 }
@@ -544,6 +548,49 @@ func (e *Engine) GetRoutes() []Route {
 	result := make([]Route, len(e.routes))
 	copy(result, e.routes)
 	return result
+}
+
+// GetMatchedOrgID returns the org_id for a message type by finding the matching route.
+func (e *Engine) GetMatchedOrgID(messageType, triggerEvent string) string {
+	e.routesMu.RLock()
+	defer e.routesMu.RUnlock()
+	matchKey := messageType + "^" + triggerEvent
+	for i := range e.routes {
+		if !e.routes[i].IsActive { continue }
+		if e.routes[i].SourceTopic == matchKey {
+			if e.routes[i].OrgID != nil { return e.routes[i].OrgID.String() }
+			return ""
+		}
+	}
+	for i := range e.routes {
+		if e.routes[i].IsActive && e.routes[i].SourceTopic == "*" {
+			if e.routes[i].OrgID != nil { return e.routes[i].OrgID.String() }
+			return ""
+		}
+	}
+	return ""
+}
+
+// GetMatchedRouteInfo returns route_id, source_cp_id, org_id for a message type.
+func (e *Engine) GetMatchedRouteInfo(messageType, triggerEvent string) (routeID, sourceCPID, orgID string) {
+	e.routesMu.RLock()
+	defer e.routesMu.RUnlock()
+	matchKey := messageType + "^" + triggerEvent
+	var matched *Route
+	for i := range e.routes {
+		if !e.routes[i].IsActive { continue }
+		if e.routes[i].SourceTopic == matchKey { matched = &e.routes[i]; break }
+	}
+	if matched == nil {
+		for i := range e.routes {
+			if e.routes[i].IsActive && e.routes[i].SourceTopic == "*" { matched = &e.routes[i]; break }
+		}
+	}
+	if matched == nil { return }
+	routeID = matched.RouteID.String()
+	sourceCPID = matched.SourceCommPoint.String()
+	if matched.OrgID != nil { orgID = matched.OrgID.String() }
+	return
 }
 
 // executeScriptFilter runs a Python/Bash/PowerShell/.NET script as a subprocess.

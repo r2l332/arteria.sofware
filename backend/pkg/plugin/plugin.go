@@ -27,6 +27,9 @@ type ProcessResult struct {
 	DestCommPointIDs   []string // All destination CPs (primary + fan-out)
 	TransformedPayload string   // rawPayload content for wire delivery
 	Envelope           *MessageEnvelope // Full envelope for DB audit trail
+	OrgID              string   // Owning org from the matched route
+	RouteID            string   // Matched route ID
+	SourceCPID         string   // Source comm point ID from the matched route
 	Err                error
 }
 

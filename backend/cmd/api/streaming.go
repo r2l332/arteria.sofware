@@ -857,7 +857,7 @@ func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStrea
 		return c.JSON(fiber.Map{"status": "purged", "subject": body.Subject})
 	})
 
-	// System overview (combined view for dashboard)
+	// System overview with per-org breakdown
 	api.Get("/platform/overview", func(c *fiber.Ctx) error {
 		// Message stats
 		var totalMsgs, totalErrors int
@@ -903,12 +903,59 @@ func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStrea
 		resp, err := nc.Request("arteria.metrics.processing", nil, 2*time.Second)
 		if err == nil { json.Unmarshal(resp.Data, &procMetrics) }
 
+		// Per-org DLQ breakdown
+		orgDLQ := make(map[string]int)
+		orgNames := make(map[string]string)
+		dlqIter := session.Query(`SELECT org_id FROM arteria.error_messages`).Iter()
+		var dlqOrgID *gocql.UUID
+		for dlqIter.Scan(&dlqOrgID) {
+			key := "unassigned"
+			if dlqOrgID != nil { key = dlqOrgID.String() }
+			orgDLQ[key]++
+		}
+		dlqIter.Close()
+
+		// Get org names
+		orgIter := session.Query(`SELECT org_id, name FROM arteria.organisations`).Iter()
+		var oID gocql.UUID
+		var oName string
+		for orgIter.Scan(&oID, &oName) { orgNames[oID.String()] = oName }
+		orgIter.Close()
+
+		// Per-org message counts
+		orgMsgs := make(map[string]int)
+		msgIter := session.Query(`SELECT org_id FROM arteria.messages`).Iter()
+		var msgOrgID *gocql.UUID
+		for msgIter.Scan(&msgOrgID) {
+			key := "unassigned"
+			if msgOrgID != nil { key = msgOrgID.String() }
+			orgMsgs[key]++
+		}
+		msgIter.Close()
+
+		// Build per-org summary
+		var orgBreakdown []fiber.Map
+		allOrgIDs := make(map[string]bool)
+		for k := range orgDLQ { allOrgIDs[k] = true }
+		for k := range orgMsgs { allOrgIDs[k] = true }
+		for oid := range allOrgIDs {
+			name := orgNames[oid]
+			if name == "" { name = oid }
+			orgBreakdown = append(orgBreakdown, fiber.Map{
+				"org_id":   oid,
+				"name":     name,
+				"messages": orgMsgs[oid],
+				"dlq":      orgDLQ[oid],
+			})
+		}
+
 		return c.JSON(fiber.Map{
-			"messages":     fiber.Map{"total": totalMsgs, "errors": totalErrors, "error_rate": func() float64 { if totalMsgs == 0 { return 0 }; return float64(totalErrors) / float64(totalMsgs) * 100 }()},
-			"routes":       fiber.Map{"total": totalRoutes, "active": activeRoutes},
-			"comm_points":  fiber.Map{"total": totalCPs, "active": activeCPs, "input": inputCPs, "output": outputCPs},
-			"nats":         fiber.Map{"stream_msgs": streamMsgs, "stream_bytes": streamBytes, "pending": pendingMsgs},
-			"processing":   procMetrics,
+			"messages":      fiber.Map{"total": totalMsgs, "errors": totalErrors, "error_rate": func() float64 { if totalMsgs == 0 { return 0 }; return float64(totalErrors) / float64(totalMsgs) * 100 }()},
+			"routes":        fiber.Map{"total": totalRoutes, "active": activeRoutes},
+			"comm_points":   fiber.Map{"total": totalCPs, "active": activeCPs, "input": inputCPs, "output": outputCPs},
+			"nats":          fiber.Map{"stream_msgs": streamMsgs, "stream_bytes": streamBytes, "pending": pendingMsgs},
+			"processing":    procMetrics,
+			"org_breakdown": orgBreakdown,
 		})
 	})
 }

@@ -39,6 +39,7 @@ interface Overview {
   comm_points: { total: number; active: number; input: number; output: number };
   nats: { stream_msgs: number; stream_bytes: number; pending: number };
   processing: Record<string, number> | null;
+  org_breakdown: Array<{ org_id: string; name: string; messages: number; dlq: number }>;
 }
 
 export default function PlatformPage() {
@@ -213,9 +214,38 @@ export default function PlatformPage() {
                   <div className="flex gap-4 text-xs text-gray-400">
                     {Object.entries(dlq.error_types).map(([t, c]) => <span key={t}>{t}: {c}</span>)}
                   </div>
-                  <div className="flex gap-2 mt-3">
-                    <button onClick={retryAllDLQ} className="px-3 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-500">Retry All</button>
-                    <button onClick={dropAllDLQ} className="px-3 py-1 text-xs bg-red-700 text-white rounded hover:bg-red-600">Drop All</button>
+                </div>
+              )}
+
+              {/* Per-Org Breakdown */}
+              {overview.org_breakdown && overview.org_breakdown.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">Per-Organisation Status</h3>
+                  <div className="bg-arteria-surface border border-arteria-border rounded-lg overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-arteria-bg"><tr>
+                        <th className="text-left px-4 py-2 text-arteria-muted">Organisation</th>
+                        <th className="text-right px-4 py-2 text-arteria-muted">Messages</th>
+                        <th className="text-right px-4 py-2 text-arteria-muted">DLQ Errors</th>
+                        <th className="text-right px-4 py-2 text-arteria-muted">Error Rate</th>
+                        <th className="text-right px-4 py-2 text-arteria-muted">Actions</th>
+                      </tr></thead>
+                      <tbody>
+                        {overview.org_breakdown.map((org, i) => (
+                          <tr key={i} className="border-t border-arteria-border/30 hover:bg-white/[0.02]">
+                            <td className="px-4 py-2 text-white font-medium">{org.name}</td>
+                            <td className="px-4 py-2 text-right text-gray-300">{org.messages.toLocaleString()}</td>
+                            <td className={`px-4 py-2 text-right font-bold ${org.dlq > 0 ? 'text-red-400' : 'text-green-400'}`}>{org.dlq}</td>
+                            <td className="px-4 py-2 text-right text-gray-400">{org.messages > 0 ? ((org.dlq / org.messages) * 100).toFixed(1) : '0.0'}%</td>
+                            <td className="px-4 py-2 text-right">
+                              {org.dlq > 0 && org.org_id !== 'unassigned' && (
+                                <button onClick={() => { setSelectedOrg(org.org_id); setActiveTab('dlq'); }} className="text-[10px] text-yellow-400 hover:text-yellow-300">Manage DLQ</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}

@@ -85,11 +85,16 @@ func (p *Plugin) Process(ctx context.Context, envelope *plugin.MessageEnvelope) 
 		}
 	}
 
+	routeID, sourceCPID, orgID := p.eng.GetMatchedRouteInfo(envelope.MessageType, envelope.TriggerEvent)
+
 	return plugin.ProcessResult{
 		DestinationTopic:   destTopic,
 		DestCommPointIDs:   destCPIDs,
 		TransformedPayload: transformed,
 		Envelope:           resultEnvelope,
+		OrgID:              orgID,
+		RouteID:            routeID,
+		SourceCPID:         sourceCPID,
 	}, false
 }
 

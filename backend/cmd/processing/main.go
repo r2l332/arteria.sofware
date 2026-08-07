@@ -179,7 +179,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		RawPayload:      envelope.RawPayload,
 		Properties:      envelope.Properties,
 	}
-	insertMessage(session, gocqlID, engEnvelope, "", "RECEIVED", now)
+	insertMessage(session, gocqlID, engEnvelope, "", "RECEIVED", now, nil)
 
 	// Emit event for WebSocket streaming
 	nc.Publish("arteria.events.received", mustJSON(map[string]interface{}{
@@ -190,6 +190,27 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 
 	// Run through the plugin registry
 	result := reg.Process(ctx, envelope)
+
+	// Resolve org_id for this message
+	var orgID *gocql.UUID
+	if result.OrgID != "" {
+		if parsed, err := gocql.ParseUUID(result.OrgID); err == nil {
+			orgID = &parsed
+		}
+	}
+	var routeUUID *gocql.UUID
+	if result.RouteID != "" {
+		if parsed, err := gocql.ParseUUID(result.RouteID); err == nil {
+			routeUUID = &parsed
+		}
+	}
+	var sourceCPUUID *gocql.UUID
+	if result.SourceCPID != "" {
+		if parsed, err := gocql.ParseUUID(result.SourceCPID); err == nil {
+			sourceCPUUID = &parsed
+		}
+	}
+
 	if result.Err != nil {
 		log.Warn("plugin chain rejected message", logging.Fields{
 			"message_id":   msgID.String(),
@@ -197,7 +218,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 			"error":        result.Err.Error(),
 		})
 
-		updateMessageStatus(session, gocqlID, "ERROR", result.Err.Error(), now)
+		updateMessageOrgAndStatus(session, gocqlID, "ERROR", result.Err.Error(), orgID, now)
 
 		dlqPayload, _ := json.Marshal(map[string]interface{}{
 			"message_id":  msgID.String(),
@@ -207,8 +228,8 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		})
 		js.Publish(subjectDLQ+"."+parsed.MessageType, dlqPayload)
 
-		session.Query(`INSERT INTO arteria.error_messages (message_id, error_type, error_details, raw_payload, retry_count, max_retries, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			gocqlID, "FILTER_ERROR", result.Err.Error(), parsed.RawPayload, 0, 3, now).Exec()
+		session.Query(`INSERT INTO arteria.error_messages (message_id, error_type, error_details, raw_payload, retry_count, max_retries, org_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			gocqlID, "FILTER_ERROR", result.Err.Error(), parsed.RawPayload, 0, 3, orgID, now).Exec()
 
 		met.Errors.Add(1)
 		met.Rejected.Add(1)
@@ -236,7 +257,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		envelopeJSON, _ := json.Marshal(result.Envelope)
 		dbPayload = string(envelopeJSON)
 	}
-	updateMessageTransformed(session, gocqlID, dbPayload, "ROUTED", now)
+	updateMessageTransformed(session, gocqlID, dbPayload, "ROUTED", now, orgID, routeUUID, sourceCPUUID)
 
 	if parsed.PatientID != "" {
 		session.Query(`INSERT INTO arteria.messages_by_patient (patient_id, created_at, message_id) VALUES (?, ?, ?)`,
@@ -285,13 +306,13 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	})
 }
 
-func insertMessage(session *gocql.Session, msgID gocql.UUID, env *engine.MessageEnvelope, transformed, status string, now time.Time) {
+func insertMessage(session *gocql.Session, msgID gocql.UUID, env *engine.MessageEnvelope, transformed, status string, now time.Time, orgID *gocql.UUID) {
 	propsJSON, _ := json.Marshal(env.Properties)
 	if err := session.Query(`INSERT INTO arteria.messages 
-		(message_id, patient_id, message_type, trigger_event, sending_facility, raw_payload, transformed_payload, properties, status, created_at, updated_at, retry_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(message_id, patient_id, message_type, trigger_event, sending_facility, raw_payload, transformed_payload, properties, status, org_id, created_at, updated_at, retry_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msgID, env.PatientID, env.MessageType, env.TriggerEvent, env.SendingFacility,
-		env.RawPayload, transformed, string(propsJSON), status, now, now, 0,
+		env.RawPayload, transformed, string(propsJSON), status, orgID, now, now, 0,
 	).Exec(); err != nil {
 		log.Error("scylla insert failed", logging.Fields{"table": "messages", "message_id": msgID.String(), "error": err.Error()})
 	}
@@ -304,9 +325,16 @@ func updateMessageStatus(session *gocql.Session, msgID gocql.UUID, status, errDe
 	}
 }
 
-func updateMessageTransformed(session *gocql.Session, msgID gocql.UUID, transformed, status string, now time.Time) {
-	if err := session.Query(`UPDATE arteria.messages SET transformed_payload = ?, status = ?, updated_at = ? WHERE message_id = ?`,
-		transformed, status, now, msgID).Exec(); err != nil {
+func updateMessageOrgAndStatus(session *gocql.Session, msgID gocql.UUID, status, errDetails string, orgID *gocql.UUID, now time.Time) {
+	if err := session.Query(`UPDATE arteria.messages SET status = ?, error_details = ?, org_id = ?, updated_at = ? WHERE message_id = ?`,
+		status, errDetails, orgID, now, msgID).Exec(); err != nil {
+		log.Error("scylla update status failed", logging.Fields{"message_id": msgID.String(), "error": err.Error()})
+	}
+}
+
+func updateMessageTransformed(session *gocql.Session, msgID gocql.UUID, transformed, status string, now time.Time, orgID, routeID, commPointID *gocql.UUID) {
+	if err := session.Query(`UPDATE arteria.messages SET transformed_payload = ?, status = ?, org_id = ?, route_id = ?, comm_point_id = ?, updated_at = ? WHERE message_id = ?`,
+		transformed, status, orgID, routeID, commPointID, now, msgID).Exec(); err != nil {
 		log.Error("scylla update transformed failed", logging.Fields{"message_id": msgID.String(), "error": err.Error()})
 	}
 }
