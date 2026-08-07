@@ -20,6 +20,10 @@ interface RouteForm {
   is_active: boolean;
 }
 
+interface RouteProperties {
+  [key: string]: string;
+}
+
 const emptyRouteForm: RouteForm = {
   name: '', description: '', source_comm_point_id: '', dest_comm_point_id: '',
   fan_out_cp_ids: [], source_topic: '', destination_topic: '', is_active: true,
@@ -36,6 +40,11 @@ export default function RoutesPage() {
   const [showRouteForm, setShowRouteForm] = useState(false);
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
   const [routeForm, setRouteForm] = useState<RouteForm>(emptyRouteForm);
+  const [routeProperties, setRouteProperties] = useState<RouteProperties>({});
+  const [newPropKey, setNewPropKey] = useState('');
+  const [newPropValue, setNewPropValue] = useState('');
+  const [chainRouteId, setChainRouteId] = useState<string>('');
+  const [showPropsPanel, setShowPropsPanel] = useState(false);
 
   const loadRoutes = () => getRoutes().then((r) => setRoutes(r.routes)).catch(console.error);
 
@@ -49,6 +58,18 @@ export default function RoutesPage() {
     setEditingFilter(null);
     const f = await getFilters(route.route_id);
     setFilters(f.filters);
+    // Load route properties
+    try {
+      const res = await fetch(`${API_BASE}/routes/${route.route_id}/properties`);
+      const data = await res.json();
+      setRouteProperties(data.properties || {});
+    } catch { setRouteProperties({}); }
+    // Load chain config
+    try {
+      const res = await fetch(`${API_BASE}/routes/${route.route_id}/chain`);
+      const data = await res.json();
+      setChainRouteId(data.next_route_id || '');
+    } catch { setChainRouteId(''); }
   };
 
   const editFilter = (filter: Filter) => {
@@ -79,8 +100,8 @@ export default function RoutesPage() {
         name: editingFilter.name,
         filter_type: editingFilter.filter_type,
         execution_order: editingFilter.execution_order,
-        js_script: editorValue,
-        config_json: editingFilter.config_json,
+        js_script: editingFilter.filter_type === 'connector' ? '' : editorValue,
+        config_json: editingFilter.filter_type === 'connector' ? editingFilter.config_json : editingFilter.config_json,
         is_active: editingFilter.is_active,
       };
 
@@ -258,10 +279,76 @@ export default function RoutesPage() {
                   <h3 className="font-semibold text-white">{selectedRoute.name}</h3>
                   <p className="text-xs text-arteria-muted">{selectedRoute.description}</p>
                 </div>
-                <button onClick={newFilter} className="px-3 py-1.5 bg-arteria-accent text-white text-sm rounded hover:bg-arteria-accent/80">
-                  + Add Filter
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowPropsPanel(!showPropsPanel)} className="px-3 py-1.5 text-xs border border-arteria-border text-arteria-muted rounded hover:text-white hover:border-arteria-accent/50">
+                    {showPropsPanel ? 'Hide' : 'Properties'}
+                  </button>
+                  <button onClick={newFilter} className="px-3 py-1.5 bg-arteria-accent text-white text-sm rounded hover:bg-arteria-accent/80">
+                    + Add Filter
+                  </button>
+                </div>
               </div>
+
+              {/* Route Properties & Chaining Panel */}
+              {showPropsPanel && (
+                <div className="px-6 py-3 border-b border-arteria-border bg-arteria-bg/50 space-y-3">
+                  <div>
+                    <p className="text-xs text-arteria-muted uppercase tracking-wider mb-2">Default Properties <span className="normal-case">(injected into every message before filters)</span></p>
+                    <div className="space-y-1">
+                      {Object.entries(routeProperties).map(([k, v]) => (
+                        <div key={k} className="flex items-center gap-2 text-xs">
+                          <span className="font-mono text-cyan-400 min-w-[120px]">{k}</span>
+                          <span className="text-gray-300 flex-1 font-mono">{v}</span>
+                          <button onClick={async () => {
+                            const updated = { ...routeProperties };
+                            delete updated[k];
+                            setRouteProperties(updated);
+                            await fetch(`${API_BASE}/routes/${selectedRoute.route_id}/properties`, {
+                              method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ properties: updated }),
+                            });
+                          }} className="text-red-400 hover:text-red-300">✕</button>
+                        </div>
+                      ))}
+                      {Object.keys(routeProperties).length === 0 && <span className="text-[10px] text-gray-600">No default properties set</span>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <input value={newPropKey} onChange={(e) => setNewPropKey(e.target.value)} placeholder="key"
+                        className="px-2 py-1 bg-arteria-bg border border-arteria-border rounded text-xs text-white font-mono w-32" />
+                      <input value={newPropValue} onChange={(e) => setNewPropValue(e.target.value)} placeholder="value"
+                        className="px-2 py-1 bg-arteria-bg border border-arteria-border rounded text-xs text-white font-mono flex-1" />
+                      <button onClick={async () => {
+                        if (!newPropKey) return;
+                        const updated = { ...routeProperties, [newPropKey]: newPropValue };
+                        setRouteProperties(updated);
+                        setNewPropKey(''); setNewPropValue('');
+                        await fetch(`${API_BASE}/routes/${selectedRoute.route_id}/properties`, {
+                          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ properties: updated }),
+                        });
+                      }} className="px-2 py-1 bg-arteria-accent text-white text-xs rounded hover:bg-arteria-accent/80">Add</button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-arteria-muted uppercase tracking-wider mb-1">Route Chaining <span className="normal-case">(forward to another route after this filter chain)</span></p>
+                    <div className="flex items-center gap-2">
+                      <select value={chainRouteId} onChange={async (e) => {
+                        const val = e.target.value;
+                        setChainRouteId(val);
+                        await fetch(`${API_BASE}/routes/${selectedRoute.route_id}/chain`, {
+                          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ next_route_id: val || null }),
+                        });
+                      }} className="flex-1 px-2 py-1 bg-arteria-bg border border-arteria-border rounded text-xs text-white">
+                        <option value="">— No chain (deliver directly) —</option>
+                        {routes.filter(r => r.route_id !== selectedRoute.route_id).map(r => (
+                          <option key={r.route_id} value={r.route_id}>{r.name} ({r.source_topic} → {r.destination_topic})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Filter chain */}
               <div className="px-6 py-4 border-b border-arteria-border">
@@ -301,8 +388,8 @@ export default function RoutesPage() {
                       <select
                         value={editingFilter.filter_type}
                         onChange={(e) => {
-                          setEditingFilter({ ...editingFilter, filter_type: e.target.value });
-                          setEditorValue(getDefaultScript(e.target.value));
+                          setEditingFilter({ ...editingFilter, filter_type: e.target.value, config_json: e.target.value === 'connector' ? getDefaultConnectorConfig() : editingFilter.config_json });
+                          if (e.target.value !== 'connector') setEditorValue(getDefaultScript(e.target.value));
                         }}
                         className="bg-arteria-bg text-sm text-gray-300 border border-arteria-border rounded px-2 py-1"
                       >
@@ -313,6 +400,7 @@ export default function RoutesPage() {
                         <option value="bash">Bash Script</option>
                         <option value="powershell">PowerShell Script</option>
                         <option value="dotnet">.NET Script (C#)</option>
+                        <option value="connector">Connector (HTTP/MLLP Call)</option>
                       </select>
                       <label className="flex items-center gap-1.5 text-sm text-arteria-muted">
                         <input
@@ -336,10 +424,16 @@ export default function RoutesPage() {
                   <div className="flex-1">
                     <MonacoEditor
                       height="100%"
-                      language={editingFilter?.filter_type === 'python' ? 'python' : editingFilter?.filter_type === 'bash' ? 'shell' : editingFilter?.filter_type === 'powershell' ? 'powershell' : editingFilter?.filter_type === 'dotnet' ? 'csharp' : 'javascript'}
+                      language={editingFilter?.filter_type === 'connector' ? 'json' : editingFilter?.filter_type === 'python' ? 'python' : editingFilter?.filter_type === 'bash' ? 'shell' : editingFilter?.filter_type === 'powershell' ? 'powershell' : editingFilter?.filter_type === 'dotnet' ? 'csharp' : 'javascript'}
                       theme="vs-dark"
-                      value={editorValue}
-                      onChange={(v) => setEditorValue(v || '')}
+                      value={editingFilter?.filter_type === 'connector' ? (editingFilter.config_json || getDefaultConnectorConfig()) : editorValue}
+                      onChange={(v) => {
+                        if (editingFilter?.filter_type === 'connector') {
+                          setEditingFilter({ ...editingFilter, config_json: v || '' });
+                        } else {
+                          setEditorValue(v || '');
+                        }
+                      }}
                       options={{
                         minimap: { enabled: false },
                         fontSize: 13,
@@ -433,4 +527,17 @@ function transform(msg) {
   return msg;
 }`;
   }
+}
+
+function getDefaultConnectorConfig(): string {
+  return JSON.stringify({
+    connector_type: "HTTP",
+    url: "https://api.example.com/lookup",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    timeout_ms: 5000,
+    body_template: "{{.RawPayload}}",
+    response_property: "api_response",
+    response_status_property: "api_status"
+  }, null, 2);
 }
