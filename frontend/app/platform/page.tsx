@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
-
-const API = typeof window !== 'undefined' ? `${window.location.origin}/api/v1` : '/api/v1';
+import { apiFetch } from '@/lib/api';
 
 interface HealthComponent {
   name: string;
@@ -43,7 +42,6 @@ interface Overview {
 }
 
 export default function PlatformPage() {
-  const [token, setToken] = useState('');
   const [activeTab, setActiveTab] = useState<'overview' | 'health' | 'nats' | 'logs' | 'dlq' | 'audit'>('overview');
   const [health, setHealth] = useState<Record<string, HealthComponent>>({});
   const [resources, setResources] = useState<Record<string, { used: number; total: number; unit: string; percent: number }>>({});
@@ -57,65 +55,54 @@ export default function PlatformPage() {
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState('');
 
-  const headers = useCallback(() => {
-    const t = typeof window !== 'undefined' ? localStorage.getItem('token') || token : token;
-    return { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' };
-  }, [token]);
-
-  const apiFetch = useCallback(async (path: string) => {
-    try {
-      const res = await fetch(`${API}${path}`, { headers: headers() });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch { return null; }
-  }, [headers]);
-
-  useEffect(() => {
-    const t = localStorage.getItem('token') || '';
-    setToken(t);
+  const fetchApi = useCallback(async (path: string) => {
+    try { return await apiFetch<Record<string, unknown>>(path); }
+    catch { return null; }
   }, []);
 
-  useEffect(() => {
-    if (!token) return;
-    loadTab(activeTab);
-  }, [activeTab, token]);
+  const postApi = useCallback(async (path: string, body?: unknown) => {
+    try { return await apiFetch<Record<string, unknown>>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }); }
+    catch { return null; }
+  }, []);
+
+  useEffect(() => { loadTab(activeTab); }, [activeTab]);
 
   const loadTab = async (tab: string) => {
     setLoading(true);
     switch (tab) {
       case 'overview': {
-        const o = await apiFetch('/platform/overview');
-        setOverview(o);
-        const d = await apiFetch('/platform/dlq/summary');
-        setDlq(d || { count: 0, error_types: {}, oldest: '', newest: '' });
+        const o = await fetchApi('/platform/overview');
+        setOverview(o as unknown as Overview);
+        const d = await fetchApi('/platform/dlq/summary');
+        setDlq((d as unknown as DLQSummary) || { count: 0, error_types: {}, oldest: '', newest: '' });
         break;
       }
       case 'health': {
-        const h = await apiFetch('/platform/health');
-        setHealth(h?.components || {});
-        setResources(h?.resources || {});
+        const h = await fetchApi('/platform/health');
+        setHealth((h?.components || {}) as Record<string, HealthComponent>);
+        setResources((h?.resources || {}) as Record<string, { used: number; total: number; unit: string; percent: number }>);
         break;
       }
       case 'nats': {
-        const n = await apiFetch('/platform/nats-stats');
-        setNats(n || {});
-        const c = await apiFetch('/platform/nats/consumers');
-        setConsumers(c?.consumers || []);
+        const n = await fetchApi('/platform/nats-stats');
+        setNats((n || {}) as NATSStats);
+        const c = await fetchApi('/platform/nats/consumers');
+        setConsumers(((c as Record<string, unknown>)?.consumers || []) as ConsumerInfo[]);
         break;
       }
       case 'logs': {
-        const l = await apiFetch(`/platform/logs/${logService}?lines=200`);
-        setLogs(l?.logs || []);
+        const l = await fetchApi(`/platform/logs/${logService}?lines=200`);
+        setLogs(((l as Record<string, unknown>)?.logs || []) as string[]);
         break;
       }
       case 'dlq': {
-        const d = await apiFetch('/platform/dlq/summary');
-        setDlq(d || { count: 0, error_types: {}, oldest: '', newest: '' });
+        const d = await fetchApi('/platform/dlq/summary');
+        setDlq((d as unknown as DLQSummary) || { count: 0, error_types: {}, oldest: '', newest: '' });
         break;
       }
       case 'audit': {
-        const a = await apiFetch('/audit-log?limit=50');
-        setAudit(a?.entries || []);
+        const a = await fetchApi('/audit-log?limit=50');
+        setAudit(((a as Record<string, unknown>)?.entries || []) as Array<Record<string, string>>);
         break;
       }
     }
@@ -123,25 +110,22 @@ export default function PlatformPage() {
   };
 
   const retryAllDLQ = async () => {
-    const res = await fetch(`${API}/platform/dlq/retry-all`, { method: 'POST', headers: headers(), body: JSON.stringify({ limit: 100 }) });
-    const data = await res.json();
-    setActionMsg(`Retried ${data.retried} messages (${data.failed} failed)`);
+    const data = await postApi('/platform/dlq/retry-all', { limit: 100 });
+    setActionMsg(`Retried ${(data as Record<string, number>)?.retried || 0} messages`);
     loadTab('dlq');
   };
 
   const dropAllDLQ = async () => {
     if (!confirm('Drop ALL DLQ messages? This cannot be undone.')) return;
-    const res = await fetch(`${API}/platform/dlq/drop-all`, { method: 'POST', headers: headers(), body: JSON.stringify({ reason: 'Bulk drop from admin panel' }) });
-    const data = await res.json();
-    setActionMsg(`Dropped ${data.dropped} messages`);
+    const data = await postApi('/platform/dlq/drop-all', { reason: 'Bulk drop from admin panel' });
+    setActionMsg(`Dropped ${(data as Record<string, number>)?.dropped || 0} messages`);
     loadTab('dlq');
   };
 
   const purgeSubject = async (subject: string) => {
     if (!confirm(`Purge all messages on ${subject}?`)) return;
-    const res = await fetch(`${API}/platform/nats/purge`, { method: 'POST', headers: headers(), body: JSON.stringify({ subject }) });
-    const data = await res.json();
-    setActionMsg(`Purged: ${data.status || data.error}`);
+    const data = await postApi('/platform/nats/purge', { subject });
+    setActionMsg(`Purged: ${(data as Record<string, string>)?.status || (data as Record<string, string>)?.error}`);
     loadTab('nats');
   };
 
