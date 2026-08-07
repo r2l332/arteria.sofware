@@ -253,7 +253,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Start stack
-        run: docker compose up -d --build --wait
+        run: docker compose --profile test up -d --build --wait
 
       - name: Wait for services
         run: |
@@ -267,7 +267,7 @@ jobs:
           done
 
       - name: Run integration tests
-        run: docker compose --profile test run --rm test-runner all
+        run: docker compose --profile test run --rm --no-deps test-runner all
 
       - name: Show logs on failure
         if: failure()
