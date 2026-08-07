@@ -1281,3 +1281,30 @@ Route B (name: "error_handler", destination_topic: "error_email")
 ├── Filter 1: python (format error email body from properties)
 └── Delivery to email CP
 ```
+
+---
+
+## Verified Test Results (2026-08-07)
+
+### Automated Test Suite: 35/35 passing
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Ingestion | 8 | ✓ All passing |
+| API CRUD | 12 | ✓ All passing |
+| Filter Chain | 3 | ✓ JS transform, conditional reject, multi-filter |
+| Routing | 3 | ✓ ADT→admissions, ORM→catch-all, mixed types |
+| Error Handling / DLQ | 3 | ✓ Missing PID, error records, status query |
+| Metrics | 6 | ✓ Live counters, per-CP, increments |
+
+### Complex Demo: 30 messages, 5 routes, 8 CPs
+
+| Route | Messages | Result |
+|-------|----------|--------|
+| ED Admissions Pipeline (ADT^A01) | 8 valid + 2 invalid | 8 ROUTED, 2 rejected (missing PID) |
+| Lab Orders Processing (ORM^O01) | 6 with STAT/routine priority | 6 ROUTED with priority classified |
+| Results Processing → Critical Alerts (ORU^R01) | 2 critical + 2 normal | 2 ROUTED + alerted, 2 correctly filtered out |
+| Catch-All Archive (ADT^A02/A03/A04/A08/A11) | 6 misc types | 6 ROUTED to archive |
+| Darren Test Route (ADT^A28) | 4 | 4 attempted (dotnet filter) |
+
+**Features exercised:** Route properties injection, lookup table enrichment, V8 JS transforms, Python script filters, conditional routing, route chaining, fan-out to archive, dotnet script filters, validation/rejection to DLQ.
