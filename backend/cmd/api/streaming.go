@@ -725,3 +725,170 @@ func registerRewireRoutes(app *fiber.App, session *gocql.Session) {
 		return c.JSON(fiber.Map{"next_route_id": nextRouteID.String(), "next_route_name": name})
 	})
 }
+
+// --- Platform Admin: DLQ Management, Queue Operations ---
+
+func registerPlatformAdminRoutes(app *fiber.App, nc *nats.Conn, js nats.JetStreamContext, session *gocql.Session) {
+	api := app.Group("/api/v1")
+
+	// Bulk retry all DLQ errors (re-inject into ingestion)
+	api.Post("/platform/dlq/retry-all", func(c *fiber.Ctx) error {
+		var body struct {
+			Limit int `json:"limit"`
+		}
+		c.BodyParser(&body)
+		if body.Limit <= 0 { body.Limit = 100 }
+
+		iter := session.Query(`SELECT message_id, raw_payload FROM arteria.error_messages LIMIT ?`, body.Limit).Iter()
+		var msgID gocql.UUID
+		var rawPayload string
+		retried, failed := 0, 0
+		for iter.Scan(&msgID, &rawPayload) {
+			if rawPayload == "" { continue }
+			_, err := js.Publish("arteria.ingest.raw", []byte(rawPayload))
+			if err != nil {
+				failed++
+				continue
+			}
+			session.Query(`DELETE FROM arteria.error_messages WHERE message_id = ?`, msgID).Exec()
+			session.Query(`UPDATE arteria.messages SET status = ?, updated_at = ? WHERE message_id = ?`, "RETRYING", time.Now(), msgID).Exec()
+			retried++
+		}
+		iter.Close()
+		return c.JSON(fiber.Map{"retried": retried, "failed": failed})
+	})
+
+	// Bulk drop all DLQ errors
+	api.Post("/platform/dlq/drop-all", func(c *fiber.Ctx) error {
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		c.BodyParser(&body)
+
+		iter := session.Query(`SELECT message_id FROM arteria.error_messages`).Iter()
+		var msgID gocql.UUID
+		dropped := 0
+		for iter.Scan(&msgID) {
+			session.Query(`DELETE FROM arteria.error_messages WHERE message_id = ?`, msgID).Exec()
+			session.Query(`UPDATE arteria.messages SET status = ?, error_details = ?, updated_at = ? WHERE message_id = ?`,
+				"DROPPED", fmt.Sprintf("Bulk dropped: %s", body.Reason), time.Now(), msgID).Exec()
+			dropped++
+		}
+		iter.Close()
+		return c.JSON(fiber.Map{"dropped": dropped, "reason": body.Reason})
+	})
+
+	// Get DLQ summary (count, oldest, newest)
+	api.Get("/platform/dlq/summary", func(c *fiber.Ctx) error {
+		var count int
+		session.Query(`SELECT COUNT(*) FROM arteria.error_messages`).Scan(&count)
+
+		var oldest, newest time.Time
+		var errTypes = make(map[string]int)
+		iter := session.Query(`SELECT error_type, created_at FROM arteria.error_messages`).Iter()
+		var errType string
+		var createdAt time.Time
+		for iter.Scan(&errType, &createdAt) {
+			errTypes[errType]++
+			if oldest.IsZero() || createdAt.Before(oldest) { oldest = createdAt }
+			if newest.IsZero() || createdAt.After(newest) { newest = createdAt }
+		}
+		iter.Close()
+
+		return c.JSON(fiber.Map{
+			"count": count, "error_types": errTypes,
+			"oldest": oldest, "newest": newest,
+		})
+	})
+
+	// NATS consumer lag per route
+	api.Get("/platform/nats/consumers", func(c *fiber.Ctx) error {
+		var consumers []fiber.Map
+		for consumer := range js.ConsumerNames("ARTERIA") {
+			ci, err := js.ConsumerInfo("ARTERIA", consumer)
+			if err != nil { continue }
+			consumers = append(consumers, fiber.Map{
+				"name":           ci.Name,
+				"stream":         ci.Stream,
+				"pending":        ci.NumPending,
+				"ack_pending":    ci.NumAckPending,
+				"delivered":      ci.Delivered.Consumer,
+				"redelivered":    ci.NumRedelivered,
+				"waiting":        ci.NumWaiting,
+				"last_delivered": ci.Delivered.Last,
+			})
+		}
+		if consumers == nil { consumers = []fiber.Map{} }
+		return c.JSON(fiber.Map{"consumers": consumers, "count": len(consumers)})
+	})
+
+	// Purge a NATS stream subject (queue management)
+	api.Post("/platform/nats/purge", func(c *fiber.Ctx) error {
+		var body struct {
+			Subject string `json:"subject"`
+		}
+		if err := c.BodyParser(&body); err != nil || body.Subject == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "subject required"})
+		}
+		err := js.PurgeStream("ARTERIA", &nats.StreamPurgeRequest{Subject: body.Subject})
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"status": "purged", "subject": body.Subject})
+	})
+
+	// System overview (combined view for dashboard)
+	api.Get("/platform/overview", func(c *fiber.Ctx) error {
+		// Message stats
+		var totalMsgs, totalErrors int
+		session.Query(`SELECT COUNT(*) FROM arteria.messages`).Scan(&totalMsgs)
+		session.Query(`SELECT COUNT(*) FROM arteria.error_messages`).Scan(&totalErrors)
+
+		// Route stats
+		var totalRoutes int
+		session.Query(`SELECT COUNT(*) FROM arteria.routes`).Scan(&totalRoutes)
+		var activeRoutes int
+		routeIter := session.Query(`SELECT is_active FROM arteria.routes`).Iter()
+		var isActive bool
+		for routeIter.Scan(&isActive) { if isActive { activeRoutes++ } }
+		routeIter.Close()
+
+		// CP stats
+		var totalCPs, activeCPs, inputCPs, outputCPs int
+		cpIter := session.Query(`SELECT direction, is_active FROM arteria.communication_points`).Iter()
+		var dir string
+		for cpIter.Scan(&dir, &isActive) {
+			totalCPs++
+			if isActive { activeCPs++ }
+			if dir == "INPUT" { inputCPs++ } else { outputCPs++ }
+		}
+		cpIter.Close()
+
+		// NATS stream state
+		var streamMsgs uint64
+		var streamBytes uint64
+		var pendingMsgs uint64
+		si, err := js.StreamInfo("ARTERIA")
+		if err == nil {
+			streamMsgs = si.State.Msgs
+			streamBytes = si.State.Bytes
+			for consumer := range js.ConsumerNames("ARTERIA") {
+				ci, _ := js.ConsumerInfo("ARTERIA", consumer)
+				if ci != nil { pendingMsgs += ci.NumPending }
+			}
+		}
+
+		// Processing metrics
+		var procMetrics map[string]interface{}
+		resp, err := nc.Request("arteria.metrics.processing", nil, 2*time.Second)
+		if err == nil { json.Unmarshal(resp.Data, &procMetrics) }
+
+		return c.JSON(fiber.Map{
+			"messages":     fiber.Map{"total": totalMsgs, "errors": totalErrors, "error_rate": func() float64 { if totalMsgs == 0 { return 0 }; return float64(totalErrors) / float64(totalMsgs) * 100 }()},
+			"routes":       fiber.Map{"total": totalRoutes, "active": activeRoutes},
+			"comm_points":  fiber.Map{"total": totalCPs, "active": activeCPs, "input": inputCPs, "output": outputCPs},
+			"nats":         fiber.Map{"stream_msgs": streamMsgs, "stream_bytes": streamBytes, "pending": pendingMsgs},
+			"processing":   procMetrics,
+		})
+	})
+}

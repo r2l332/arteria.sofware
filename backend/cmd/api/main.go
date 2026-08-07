@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -297,20 +298,43 @@ func main() {
 	api.Get("/audit-log", auth.RequireAnyPermission(auth.PermConfigManage, auth.PermUserManage), func(c *fiber.Ctx) error {
 		username := c.Query("username", "")
 		limit := c.QueryInt("limit", 50)
-		if username == "" {
-			return c.JSON(fiber.Map{"audit_log": []fiber.Map{}, "hint": "specify ?username=admin"})
-		}
 		var items []fiber.Map
-		iter := session.Query(`SELECT event_id, timestamp, action, resource, client_ip FROM arteria.audit_log WHERE username = ? LIMIT ?`, username, limit).Iter()
-		var eID gocql.UUID
-		var ts time.Time
-		var action, resource, ip string
-		for iter.Scan(&eID, &ts, &action, &resource, &ip) {
-			items = append(items, fiber.Map{"event_id": eID.String(), "timestamp": ts, "action": action, "resource": resource, "client_ip": ip})
+		if username != "" {
+			iter := session.Query(`SELECT event_id, timestamp, action, resource, client_ip FROM arteria.audit_log WHERE username = ? LIMIT ?`, username, limit).Iter()
+			var eID gocql.UUID
+			var ts time.Time
+			var action, resource, ip string
+			for iter.Scan(&eID, &ts, &action, &resource, &ip) {
+				items = append(items, fiber.Map{"event_id": eID.String(), "timestamp": ts, "username": username, "action": action, "resource": resource, "client_ip": ip})
+			}
+			iter.Close()
+		} else {
+			// Scan all users' audit entries (limited)
+			userIter := session.Query(`SELECT DISTINCT username FROM arteria.audit_log`).Iter()
+			var uname string
+			var allEntries []fiber.Map
+			for userIter.Scan(&uname) {
+				iter := session.Query(`SELECT event_id, timestamp, action, resource, client_ip FROM arteria.audit_log WHERE username = ? LIMIT ?`, uname, 20).Iter()
+				var eID gocql.UUID
+				var ts time.Time
+				var action, resource, ip string
+				for iter.Scan(&eID, &ts, &action, &resource, &ip) {
+					allEntries = append(allEntries, fiber.Map{"event_id": eID.String(), "timestamp": ts, "username": uname, "action": action, "resource": resource, "client_ip": ip})
+				}
+				iter.Close()
+			}
+			userIter.Close()
+			// Sort by timestamp desc and take limit
+			sort.Slice(allEntries, func(i, j int) bool {
+				ti, _ := allEntries[i]["timestamp"].(time.Time)
+				tj, _ := allEntries[j]["timestamp"].(time.Time)
+				return ti.After(tj)
+			})
+			if len(allEntries) > limit { allEntries = allEntries[:limit] }
+			items = allEntries
 		}
-		iter.Close()
 		if items == nil { items = []fiber.Map{} }
-		return c.JSON(fiber.Map{"audit_log": items, "count": len(items)})
+		return c.JSON(fiber.Map{"entries": items, "count": len(items)})
 	})
 
 	// --- Patient Journey ---
@@ -329,6 +353,7 @@ func main() {
 	startNATSBridge(nc, wsHub)
 	registerStreamingRoutes(app, nc, js, session, wsHub)
 	registerRewireRoutes(app, session)
+	registerPlatformAdminRoutes(app, nc, js, session)
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
