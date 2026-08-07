@@ -56,7 +56,7 @@ const allNav: NavItem[] = [
   { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
   { href: '/organisations', label: 'Organisations', icon: Building2, module: 'platform', section: 'tools' },
-  { href: '/platform', label: 'Platform Admin', icon: Server, section: 'tools' },
+  { href: '/platform', label: 'Platform Admin', icon: Server, module: 'super_admin_only', section: 'tools' },
 ];
 
 export default function Sidebar() {
@@ -88,6 +88,7 @@ export default function Sidebar() {
 
   const visibleNav = allNav.filter(item => {
     if (!item.module) return true;
+    if (item.module === 'super_admin_only') return isPlatformRole;
     if (item.module === 'rbac') return role === 'admin' || role === 'security' || role === 'super_admin';
     if (item.module === 'platform') return role === 'super_admin' || role === 'admin' || role === 'devops';
     return modules[item.module];
