@@ -1,5 +1,7 @@
 # Arteria.sofware
 
+[![CI](https://github.com/r2l332/arteria.sofware/actions/workflows/ci.yml/badge.svg)](https://github.com/r2l332/arteria.sofware/actions/workflows/ci.yml)
+
 A high-throughput, cloud-native HL7v2/FHIR/DICOM interoperability engine designed for 25M+ messages/day. Built for speed — with an encrypted Aorta mesh that eliminates the need for VPNs, and enterprise-grade security for healthcare environments.
 
 ## Architecture
