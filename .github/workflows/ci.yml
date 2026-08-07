@@ -271,4 +271,10 @@ jobs:
 
       - name: Show logs on failure
         if: failure()
-        run: docker compose logs --tail=50
+        run: |
+          echo "=== Processing logs ==="
+          docker compose logs processing --tail=30
+          echo "=== Scylla init logs ==="
+          docker compose logs scylla-init --tail=20
+          echo "=== API logs ==="
+          docker compose logs api --tail=20

@@ -34,10 +34,14 @@ CREATE TABLE IF NOT EXISTS arteria.routes (
     description text,
     source_comm_point_id uuid,
     dest_comm_point_id uuid,
-    source_topic text,        -- NATS subject match pattern (e.g., 'ADT^A01', '*')
-    destination_topic text,   -- NATS routing subject
+    source_topic text,
+    destination_topic text,
     is_active boolean,
-    retention_days int,       -- Per-route message retention (overrides global 30d default)
+    retention_days int,
+    fan_out_cp_ids list<uuid>,
+    fan_out_config text,
+    default_properties text,
+    next_route_id uuid,
     created_at timestamp,
     updated_at timestamp,
     PRIMARY KEY (route_id)
