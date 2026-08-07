@@ -416,12 +416,37 @@ func waitForServices(apiBase string) {
 		resp, err := http.Get(apiBase + "/health")
 		if err == nil && resp.StatusCode == 200 {
 			resp.Body.Close()
-			fmt.Println("Services ready.")
-			return
+			fmt.Println("API ready.")
+			break
 		}
 		time.Sleep(1 * time.Second)
 	}
-	fmt.Println("WARNING: Services may not be fully ready")
+
+	// Wait for processing to be connected by checking metrics
+	fmt.Println("Waiting for processing service...")
+	for i := 0; i < 30; i++ {
+		req, _ := http.NewRequest("GET", apiBase+"/api/v1/metrics", nil)
+		if authToken == "" {
+			// Try login for metrics check
+			apiLogin(apiBase)
+		}
+		if authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+authToken)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var data map[string]interface{}
+			json.Unmarshal(body, &data)
+			if data["processing"] != nil {
+				fmt.Println("Processing service ready.")
+				return
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	fmt.Println("WARNING: Processing service may not be fully ready")
 }
 
 // ============================================================
@@ -975,7 +1000,14 @@ func runMetricsTests(mllpHost string, mllpPort int, apiBase string) *TestSuite {
 
 	s.run("Processing routed count > 0", func() error {
 		result, _ := apiGet(apiBase, "/api/v1/metrics")
-		proc := result["processing"].(map[string]interface{})
+		procRaw, ok := result["processing"]
+		if !ok || procRaw == nil {
+			return fmt.Errorf("missing processing metrics")
+		}
+		proc, ok := procRaw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("processing metrics not a map")
+		}
 		if proc["routed"].(float64) < 1 {
 			return fmt.Errorf("processing routed is 0")
 		}

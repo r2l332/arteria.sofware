@@ -265,8 +265,6 @@ jobs:
             fi
             sleep 2
           done
-          echo "Waiting for processing to connect..."
-          sleep 10
 
       - name: Run integration tests
         run: docker compose --profile test run --rm test-runner all
