@@ -21,6 +21,7 @@ import {
   Mail,
   Building2,
   Activity,
+  Server,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '@/lib/auth';
@@ -55,6 +56,7 @@ const allNav: NavItem[] = [
   { href: '/settings', label: 'Settings', icon: Settings, section: 'tools' },
   { href: '/users', label: 'Users & Access', icon: Users, module: 'rbac', section: 'tools' },
   { href: '/organisations', label: 'Organisations', icon: Building2, module: 'platform', section: 'tools' },
+  { href: '/platform', label: 'Platform Admin', icon: Server, module: 'platform', section: 'tools' },
 ];
 
 export default function Sidebar() {
