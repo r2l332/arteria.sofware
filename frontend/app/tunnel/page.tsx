@@ -38,6 +38,7 @@ export default function TunnelPage() {
   });
   const [enrollInfo, setEnrollInfo] = useState<{ token: string; nodeId: string } | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
+  const [platformPick, setPlatformPick] = useState<string | null>(null); // node_id needing platform selection
 
   const load = () => getTunnelNodes().then(d => setNodes(d.nodes || [])).catch(console.error);
   useEffect(() => { load(); }, []);
@@ -63,17 +64,15 @@ export default function TunnelPage() {
   };
 
   const updateNode = async (id: string, os?: string, arch?: string) => {
-    if (!os && !confirm('Push Capillary update to this agent? It will restart automatically.')) return;
+    if (!os && !confirm('Push Capillary update to this agent?')) return;
     setUpdating(id);
+    setPlatformPick(null);
     try {
       const r = await pushTunnelUpdate(id, os, arch);
       if (r.need_platform) {
-        const platform = prompt('Agent is too old to report its platform.\\nEnter platform (e.g. darwin/arm64, linux/amd64):');
-        if (platform) {
-          const [pOS, pArch] = platform.split('/');
-          setUpdating(null);
-          return updateNode(id, pOS, pArch);
-        }
+        setPlatformPick(id);
+        setUpdating(null);
+        return;
       } else if (r.error) {
         toast('Update failed: ' + r.error, 'error');
       } else {
@@ -185,6 +184,19 @@ export default function TunnelPage() {
                     {node.agent_version && <p>Capillary: v{node.agent_version}</p>}
                     {node.last_seen && <p>Last seen: {new Date(node.last_seen).toLocaleString()}</p>}
                   </div>
+                  {platformPick === node.node_id && (
+                    <div className="mt-2 p-2 bg-arteria-bg border border-arteria-accent/50 rounded-lg">
+                      <p className="text-[10px] text-arteria-muted mb-2">Agent too old to report platform. Select:</p>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {[['darwin/arm64','macOS ARM'],['darwin/amd64','macOS Intel'],['linux/amd64','Linux x64'],['linux/arm64','Linux ARM'],['windows/amd64','Windows']].map(([val,label]) => (
+                          <button key={val} onClick={e => { e.stopPropagation(); const [o,a]=val.split('/'); updateNode(node.node_id,o,a); }}
+                            className="px-2 py-1 text-[10px] bg-arteria-accent/20 border border-arteria-accent/40 text-arteria-accent rounded hover:bg-arteria-accent/30">{label}</button>
+                        ))}
+                        <button onClick={e => { e.stopPropagation(); setPlatformPick(null); }}
+                          className="px-2 py-1 text-[10px] text-arteria-muted hover:text-white">Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
               {nodes.length === 0 && (
