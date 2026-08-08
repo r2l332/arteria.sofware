@@ -12,13 +12,14 @@ import (
 
 // MessageEnvelope is the data flowing through the processing pipeline.
 type MessageEnvelope struct {
-	MessageID       string            `json:"messageId"`
-	MessageType     string            `json:"messageType"`
-	TriggerEvent    string            `json:"triggerEvent"`
-	SendingFacility string            `json:"sendingFacility"`
-	PatientID       string            `json:"patientId"`
-	RawPayload      string            `json:"rawPayload"`
-	Properties      map[string]string `json:"properties"`
+	MessageID       string              `json:"messageId"`
+	MessageType     string              `json:"messageType"`
+	TriggerEvent    string              `json:"triggerEvent"`
+	SendingFacility string              `json:"sendingFacility"`
+	PatientID       string              `json:"patientId"`
+	RawPayload      string              `json:"rawPayload"`
+	Properties      map[string]string   `json:"properties"`
+	Segments        map[string][][]string `json:"segments,omitempty"`
 }
 
 // ProcessResult is returned by a processor plugin after handling a message.

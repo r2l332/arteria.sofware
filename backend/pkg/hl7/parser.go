@@ -72,3 +72,22 @@ func (m *Message) parsePID(fields []string) {
 		m.PatientID = components[0]
 	}
 }
+
+// ParseSegments returns a map of segment name → array of repetitions → array of fields.
+// For example: segments["PID"][0][3] = "MRN001^^^^^MR" (PID-3 of first PID).
+// Each field value includes components (^-separated) as a single string.
+// Filters can access segments["MSH"][0][4] to get MSH-4 (Sending Facility).
+// Note: MSH field indices are offset by 1 (MSH[0][0]="MSH", MSH[0][1]=encoding chars, MSH[0][3]=Sending Facility).
+func ParseSegments(raw string) map[string][][]string {
+	segs := make(map[string][][]string)
+	for _, line := range strings.Split(raw, "\r") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		name := fields[0]
+		segs[name] = append(segs[name], fields)
+	}
+	return segs
+}

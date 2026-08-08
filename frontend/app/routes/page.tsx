@@ -390,11 +390,11 @@ function NewRouteModal({ commPoints, onClose, onCreated }: { commPoints: CommPoi
 
 function getDefaultScript(t: string): string {
   switch (t) {
-    case 'conditional': return 'function evaluate(msg) {\n  if (!msg.patientId) return { action: "reject", reason: "Missing PID" };\n  return { action: "pass" };\n}';
-    case 'python': return 'import sys, json\n\nmsg = json.load(sys.stdin)\nmsg["properties"]["filter_lang"] = "python"\nprint(json.dumps(msg))';
-    case 'bash': return '#!/bin/bash\nINPUT=$(cat)\necho "$INPUT" | jq \'.properties.filter_lang = "bash"\'';
-    case 'dotnet': return 'using System;\nvar input = Console.In.ReadToEnd();\nConsole.Write(input);';
+    case 'conditional': return 'function evaluate(msg) {\n  // Access HL7 fields: getField(msg, "PID", 3) = Patient ID\n  if (!msg.patientId) return { action: "reject", reason: "Missing PID" };\n  return { action: "pass" };\n}';
+    case 'python': return 'import sys, json\n\nmsg = json.load(sys.stdin)\n# Access HL7 segments: msg["segments"]["MSH"][0][4] = Sending Facility\nmsg["segments"]["MSH"][0][4] = "NEW_FACILITY"\nprint(json.dumps(msg))';
+    case 'bash': return '#!/bin/bash\nINPUT=$(cat)\necho "$INPUT" | jq \'.segments.MSH[0][4] = "NEW_FACILITY"\'';
+    case 'dotnet': return 'using System;\nusing System.Text.Json;\nusing System.Text.Json.Nodes;\n\nvar input = Console.In.ReadToEnd();\nvar msg = JsonNode.Parse(input);\n// Access HL7: msg["segments"]["MSH"][0][4] = Sending Facility\nmsg["segments"]["MSH"][0][4] = "NEW_FACILITY";\nConsole.Write(msg.ToJsonString());';
     case 'connector': return JSON.stringify({ connector_type: "HTTP", url: "https://api.example.com", method: "POST", timeout_ms: 5000, response_property: "api_response", response_status_property: "api_status" }, null, 2);
-    default: return 'function transform(msg) {\n  msg.properties.processed_at = new Date().toISOString();\n  return msg;\n}';
+    default: return '// HL7 helpers: getField(msg, "PID", 3), setField(msg, "MSH", 4, "value")\n// Components: getComponent(field, 1), setComponent(field, 2, "value")\nfunction transform(msg) {\n  // Change MSH-4 (Sending Facility)\n  setField(msg, "MSH", 4, "ARTERIA");\n  msg.properties.processed_at = new Date().toISOString();\n  return msg;\n}';
   }
 }

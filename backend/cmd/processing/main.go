@@ -190,6 +190,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 		PatientID:       envelope.PatientID,
 		RawPayload:      envelope.RawPayload,
 		Properties:      envelope.Properties,
+		Segments:        hl7.ParseSegments(envelope.RawPayload),
 	}
 	insertMessage(session, gocqlID, engEnvelope, "", "RECEIVED", now, nil)
 

@@ -29,6 +29,8 @@ type MessageEnvelope struct {
 	PatientID       string            `json:"patientId"`
 	RawPayload      string            `json:"rawPayload"`
 	Properties      map[string]string `json:"properties"`
+	// Parsed HL7 segment tree — filters can read/write fields via segments["PID"][3][1]
+	Segments map[string][][]string `json:"segments,omitempty"`
 }
 
 // FilterResult is returned by each filter in the chain.
@@ -326,7 +328,10 @@ func (e *Engine) executeFilterChain(ctx context.Context, route *Route, envelope 
 func (e *Engine) executeJSFilter(ctx context.Context, filter *Filter, envelope *MessageEnvelope) (*FilterResult, error) {
 	payloadBytes, _ := json.Marshal(envelope)
 
-	result := e.v8Pool.Execute(ctx, filter.JSScript, string(payloadBytes))
+	// Prepend HL7 helper functions available to all JS filters
+	script := hl7JSHelpers + filter.JSScript
+
+	result := e.v8Pool.Execute(ctx, script, string(payloadBytes))
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -336,11 +341,39 @@ func (e *Engine) executeJSFilter(ctx context.Context, filter *Filter, envelope *
 		return nil, fmt.Errorf("unmarshal V8 output: %w", err)
 	}
 
+	syncEnvelopeToRawPayload(&output, envelope)
+
 	return &FilterResult{
 		Action: "pass",
 		Output: &output,
 	}, nil
 }
+
+// HL7 helper functions injected into every JS filter execution context.
+const hl7JSHelpers = `
+function getField(msg, segment, field, rep) {
+  rep = rep || 0;
+  var segs = msg.segments && msg.segments[segment];
+  if (!segs || !segs[rep]) return '';
+  return segs[rep][field] || '';
+}
+function setField(msg, segment, field, value, rep) {
+  rep = rep || 0;
+  if (!msg.segments) msg.segments = {};
+  if (!msg.segments[segment]) msg.segments[segment] = [[]];
+  while (msg.segments[segment].length <= rep) msg.segments[segment].push([]);
+  while (msg.segments[segment][rep].length <= field) msg.segments[segment][rep].push('');
+  msg.segments[segment][rep][field] = value;
+  return msg;
+}
+function getComponent(fieldValue, comp) { return (fieldValue || '').split('^')[comp - 1] || ''; }
+function setComponent(fieldValue, comp, value) {
+  var parts = (fieldValue || '').split('^');
+  while (parts.length < comp) parts.push('');
+  parts[comp - 1] = value;
+  return parts.join('^');
+}
+`
 
 // executeConditionalFilter runs a JS predicate that returns routing decisions.
 // Script must define: function evaluate(msg) { return { action: "pass"|"reject"|"route_to", ... }; }
@@ -675,11 +708,38 @@ func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelo
 	return &FilterResult{Action: "pass", Output: &result}, nil
 }
 
-// syncEnvelopeToRawPayload updates HL7 MSH fields in RawPayload if the script
-// modified envelope fields like sendingFacility but didn't touch rawPayload.
+// syncEnvelopeToRawPayload rebuilds RawPayload from Segments if the script modified them,
+// or from envelope fields if the script modified those instead.
 func syncEnvelopeToRawPayload(result, original *MessageEnvelope) {
+	// If script modified segments, rebuild rawPayload from the segment tree
+	if result.Segments != nil && len(result.Segments) > 0 {
+		var lines []string
+		// Preserve original segment order from rawPayload
+		for _, line := range strings.Split(original.RawPayload, "\r") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.Split(line, "|")
+			name := fields[0]
+			// Find matching segment in result
+			if segs, ok := result.Segments[name]; ok && len(segs) > 0 {
+				lines = append(lines, strings.Join(segs[0], "|"))
+				// Consume first repetition
+				result.Segments[name] = segs[1:]
+			} else {
+				lines = append(lines, line)
+			}
+		}
+		rebuilt := strings.Join(lines, "\r")
+		if rebuilt != original.RawPayload {
+			result.RawPayload = rebuilt
+			return
+		}
+	}
+
+	// Fallback: sync envelope fields to MSH if rawPayload unchanged
 	if result.RawPayload == "" || result.RawPayload == original.RawPayload {
-		// Script didn't modify rawPayload directly — rebuild from envelope fields
 		lines := strings.Split(result.RawPayload, "\r")
 		if len(lines) == 0 || !strings.HasPrefix(lines[0], "MSH|") {
 			return
