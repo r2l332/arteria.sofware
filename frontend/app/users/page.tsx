@@ -157,7 +157,7 @@ export default function UsersPage() {
               <span className="text-sm font-medium text-white">Roles & Permissions</span>
             </div>
             <div className="p-5 grid grid-cols-1 gap-3">
-              {roles.map(r => (
+              {roles.filter(r => r.role !== 'super_admin' && r.role !== 'devops').map(r => (
                 <div key={r.role} className="flex items-start gap-4">
                   <span className={`badge mt-0.5 min-w-[80px] justify-center ${roleColor[r.role] || roleColor.viewer}`}>{r.role}</span>
                   <div className="flex flex-wrap gap-1.5">
