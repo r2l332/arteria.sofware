@@ -64,7 +64,6 @@ export default function TunnelPage() {
   };
 
   const updateNode = async (id: string, os?: string, arch?: string) => {
-    if (!os && !confirm('Push Capillary update to this agent?')) return;
     setUpdating(id);
     setPlatformPick(null);
     try {
@@ -75,7 +74,7 @@ export default function TunnelPage() {
         return;
       } else if (r.error) {
         toast('Update failed: ' + r.error, 'error');
-      } else {
+      } else if (r.success) {
         toast('Update pushed — agent is restarting', 'success');
       }
     } catch (e: any) { toast('Update failed: ' + (e.message || e), 'error'); }
