@@ -210,6 +210,7 @@ func main() {
 		api.Post("/routes", auth.RequirePermission(auth.PermRouteManage), createRoute(session))
 		api.Put("/routes/:id", auth.RequirePermission(auth.PermRouteManage), updateRoute(session))
 		api.Delete("/routes/:id", auth.RequirePermission(auth.PermRouteManage), deleteRoute(session))
+		api.Post("/routes/:id/clone", auth.RequirePermission(auth.PermRouteManage), cloneRoute(session))
 
 		api.Get("/routes/:id/filters", auth.RequirePermission(auth.PermRouteView), listFilters(session))
 		api.Post("/routes/:id/filters", auth.RequirePermission(auth.PermRouteManage), createFilter(session))
@@ -639,6 +640,45 @@ func deleteRoute(session *gocql.Session) fiber.Handler {
 	}
 }
 
+func cloneRoute(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		srcID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid ID"})
+		}
+		// Read source route
+		var name, desc, srcTopic, dstTopic string
+		var srcCP, dstCP gocql.UUID
+		var isActive bool
+		err = session.Query(`SELECT name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active FROM arteria.routes WHERE route_id=?`, srcID).
+			Scan(&name, &desc, &srcCP, &dstCP, &srcTopic, &dstTopic, &isActive)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": "route not found"})
+		}
+		// Create clone
+		newID := gocql.TimeUUID()
+		now := time.Now()
+		session.Query(`INSERT INTO arteria.routes (route_id, name, description, source_comm_point_id, dest_comm_point_id, source_topic, destination_topic, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			newID, name+" (Copy)", desc, srcCP, dstCP, srcTopic, dstTopic, false, now, now).Exec()
+		// Clone filters
+		iter := session.Query(`SELECT filter_id, name, filter_type, execution_order, js_script, config_json, is_active FROM arteria.filters WHERE route_id=?`, srcID).Iter()
+		var fID gocql.UUID
+		var fName, fType, fScript, fConfig string
+		var fOrder int
+		var fActive bool
+		for iter.Scan(&fID, &fName, &fType, &fOrder, &fScript, &fConfig, &fActive) {
+			newFID := gocql.TimeUUID()
+			session.Query(`INSERT INTO arteria.filters (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+				newFID, newID, fName, fType, fOrder, fScript, fConfig, fActive, now).Exec()
+			session.Query(`INSERT INTO arteria.filters_by_id (filter_id, route_id, name, filter_type, execution_order, js_script, config_json, is_active, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+				newFID, newID, fName, fType, fOrder, fScript, fConfig, fActive, now).Exec()
+		}
+		iter.Close()
+		publishConfigChange(natsConn, "route", "cloned", newID.String())
+		return c.Status(201).JSON(fiber.Map{"route_id": newID.String(), "name": name + " (Copy)"})
+	}
+}
+
 // ==================== Filters ====================
 
 func listFilters(session *gocql.Session) fiber.Handler {
@@ -890,11 +930,21 @@ func getMessage(session *gocql.Session) fiber.Handler {
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": "not found"})
 		}
+
+		// PHI masking based on role
+		claims, _ := c.Locals("claims").(*auth.Claims)
+		canView := claims != nil && auth.CanViewPHI(claims.Role)
+		maskedRaw := auth.MaskHL7Payload(raw, canView)
+		maskedTransformed := auth.MaskJSONPayload(transformed, canView)
+		maskedPID := pid
+		if !canView && pid != "" { maskedPID = string(pid[0]) + "***" + string(pid[len(pid)-1]) }
+
 		return c.JSON(fiber.Map{
-			"message_id": id.String(), "patient_id": pid, "message_type": mt,
-			"trigger_event": te, "sending_facility": sf, "raw_payload": raw,
-			"transformed_payload": transformed, "properties": props, "status": st,
+			"message_id": id.String(), "patient_id": maskedPID, "message_type": mt,
+			"trigger_event": te, "sending_facility": sf, "raw_payload": maskedRaw,
+			"transformed_payload": maskedTransformed, "properties": props, "status": st,
 			"error_details": errDet, "created_at": ca, "updated_at": ua, "retry_count": retries,
+			"phi_masked": !canView,
 		})
 	}
 }
