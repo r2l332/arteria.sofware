@@ -42,7 +42,7 @@ export default function FlowPage() {
   const [nodeMessagesLabel, setNodeMessagesLabel] = useState('');
   const [inspectingMsg, setInspectingMsg] = useState<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const counts = useRef({ received: 0, routed: 0, errors: 0 });
+  const [counts, setCounts] = useState({ received: 0, routed: 0, errors: 0 });
 
   useEffect(() => {
     const loadConfig = () => {
@@ -66,10 +66,11 @@ export default function FlowPage() {
     getRouteRecent(selectedRouteId, 50).then(r => {
       const msgs = r.messages || [];
       setRecentMsgs(msgs.slice(0, 8));
-      // Per-route counts from actual messages
-      counts.current.received = msgs.length;
-      counts.current.routed = msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length;
-      counts.current.errors = msgs.filter((m: any) => m.status === 'ERROR').length;
+      setCounts({
+        received: msgs.length,
+        routed: msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length,
+        errors: msgs.filter((m: any) => m.status === 'ERROR').length,
+      });
     }).catch(() => {});
   }, [selectedRouteId]);
 
@@ -83,9 +84,9 @@ export default function FlowPage() {
         const eventRouteId = msg.route_id || '';
         if (selectedRouteId && eventRouteId && eventRouteId !== selectedRouteId) return;
         setLiveMessages(prev => [msg as LiveMessage, ...prev].slice(0, 30));
-        if (msg.stage === 'received') counts.current.received++;
-        if (msg.stage === 'routed') counts.current.routed++;
-        if (msg.stage === 'error') counts.current.errors++;
+        if (msg.stage === 'received') setCounts(prev => ({ ...prev, received: prev.received + 1 }));
+        if (msg.stage === 'routed') setCounts(prev => ({ ...prev, routed: prev.routed + 1 }));
+        if (msg.stage === 'error') setCounts(prev => ({ ...prev, errors: prev.errors + 1 }));
       }
       if (event.type === 'metric') {
         setMetrics(event.data);
@@ -98,9 +99,11 @@ export default function FlowPage() {
       if (!selectedRouteId) return;
       getRouteRecent(selectedRouteId, 50).then(r => {
         const msgs = r.messages || [];
-        counts.current.received = msgs.length;
-        counts.current.routed = msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length;
-        counts.current.errors = msgs.filter((m: any) => m.status === 'ERROR').length;
+        setCounts({
+          received: msgs.length,
+          routed: msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length,
+          errors: msgs.filter((m: any) => m.status === 'ERROR').length,
+        });
       }).catch(() => {});
     }, 5000);
     return () => { ws?.close(); clearInterval(poll); };
@@ -163,10 +166,10 @@ export default function FlowPage() {
   const yMid = 170;
   const xOff = 120;
 
-  if (srcCP) { nodes.push({ id: 'src', type: 'source', label: srcCP.name, sublabel: `${srcCP.protocol} :${srcCP.port}`, active: srcCP.is_active, count: counts.current.received, x: xOff + col * colW, y: yMid, data: srcCP }); col++; }
-  if (selectedRoute) { nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: counts.current.received, x: xOff + col * colW, y: yMid + 50, data: selectedRoute }); col++; }
-  filters.forEach((f, i) => { nodes.push({ id: `f-${i}`, type: 'filter', label: f.name, sublabel: f.filter_type, active: f.is_active, count: counts.current.routed, x: xOff + col * colW, y: yMid + (i % 2 === 0 ? -10 : 30), data: f }); col++; });
-  if (dstCP) { nodes.push({ id: 'dst', type: 'destination', label: dstCP.name, sublabel: `${dstCP.protocol} :${dstCP.port}`, active: dstCP.is_active, count: counts.current.routed, x: xOff + col * colW, y: yMid, data: dstCP }); }
+  if (srcCP) { nodes.push({ id: 'src', type: 'source', label: srcCP.name, sublabel: `${srcCP.protocol} :${srcCP.port}`, active: srcCP.is_active, count: counts.received, x: xOff + col * colW, y: yMid, data: srcCP }); col++; }
+  if (selectedRoute) { nodes.push({ id: 'route', type: 'route', label: selectedRoute.name, sublabel: selectedRoute.source_topic, active: selectedRoute.is_active, count: counts.received, x: xOff + col * colW, y: yMid + 50, data: selectedRoute }); col++; }
+  filters.forEach((f, i) => { nodes.push({ id: `f-${i}`, type: 'filter', label: f.name, sublabel: f.filter_type, active: f.is_active, count: counts.routed, x: xOff + col * colW, y: yMid + (i % 2 === 0 ? -10 : 30), data: f }); col++; });
+  if (dstCP) { nodes.push({ id: 'dst', type: 'destination', label: dstCP.name, sublabel: `${dstCP.protocol} :${dstCP.port}`, active: dstCP.is_active, count: counts.routed, x: xOff + col * colW, y: yMid, data: dstCP }); }
 
   const canvasW = Math.max(1000, (col + 2) * colW);
   const canvasH = 240;
@@ -196,9 +199,9 @@ export default function FlowPage() {
           <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/15 via-transparent to-purple-950/15 pointer-events-none" />
           {/* Stats chips */}
           <div className="absolute top-3 left-4 flex gap-2 z-10">
-            <Chip label="IN" value={counts.current.received} color="text-sky-400" />
-            <Chip label="OUT" value={counts.current.routed} color="text-emerald-400" />
-            {counts.current.errors > 0 && <Chip label="ERR" value={counts.current.errors} color="text-red-400" />}
+            <Chip label="IN" value={counts.received} color="text-sky-400" />
+            <Chip label="OUT" value={counts.routed} color="text-emerald-400" />
+            {counts.errors > 0 && <Chip label="ERR" value={counts.errors} color="text-red-400" />}
           </div>
 
           <div className="relative h-full" style={{ minWidth: canvasW }}>
