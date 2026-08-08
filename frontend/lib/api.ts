@@ -100,8 +100,10 @@ export const getTunnelMappings = (nodeId: string) =>
 export const createTunnelMapping = (nodeId: string, data: any) =>
   apiFetch<{ status: string }>(`/tunnel/nodes/${nodeId}/mappings`, { method: 'POST', body: JSON.stringify(data) });
 
-export const pushTunnelUpdate = (nodeId: string) =>
-  apiFetch<{ success: boolean; error?: string }>(`/tunnel/nodes/${nodeId}/update`, { method: 'POST' });
+export const pushTunnelUpdate = (nodeId: string, os?: string, arch?: string) =>
+  apiFetch<{ success: boolean; error?: string; need_platform?: boolean }>(`/tunnel/nodes/${nodeId}/update`, {
+    method: 'POST', body: JSON.stringify({ os: os || '', arch: arch || '' }),
+  });
 
 // --- Lookup Tables ---
 export const getLookupTables = () =>

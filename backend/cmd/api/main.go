@@ -1753,7 +1753,13 @@ func pushTunnelUpdateHandler(nc *nats.Conn) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		nodeID := c.Params("id")
 
-		// Get agent's current session info (os/arch) from broker
+		var body struct {
+			OS   string `json:"os"`
+			Arch string `json:"arch"`
+		}
+		c.BodyParser(&body)
+
+		// Try broker session info first
 		infoResp, err := nc.Request("arteria.tunnel.session-info", []byte(nodeID), 3*time.Second)
 		if err != nil {
 			return c.Status(502).JSON(fiber.Map{"error": "broker unreachable"})
@@ -1769,10 +1775,19 @@ func pushTunnelUpdateHandler(nc *nats.Conn) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "node not connected"})
 		}
 
+		// Use broker-reported os/arch, fall back to request body
+		agentOS := info.OS
+		agentArch := info.Arch
+		if agentOS == "" { agentOS = body.OS }
+		if agentArch == "" { agentArch = body.Arch }
+		if agentOS == "" || agentArch == "" {
+			return c.Status(400).JSON(fiber.Map{"error": "agent too old to report OS/arch — select platform manually", "need_platform": true})
+		}
+
 		// Read the appropriate pre-built binary
 		binaryDir := envOrDefault("CAPILLARY_DIST_DIR", "/dist")
 		version := envOrDefault("CAPILLARY_VERSION", "0.2.0")
-		binaryName := fmt.Sprintf("capillary-%s-%s-%s", version, info.OS, info.Arch)
+		binaryName := fmt.Sprintf("capillary-%s-%s-%s", version, agentOS, agentArch)
 		binary, err := os.ReadFile(binaryDir + "/" + binaryName)
 		if err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": fmt.Sprintf("binary not found: %s (build with scripts/build-capillary.sh)", binaryName)})

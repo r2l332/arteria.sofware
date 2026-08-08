@@ -61,13 +61,23 @@ export default function TunnelPage() {
     load();
   };
 
-  const updateNode = async (id: string) => {
-    if (!confirm('Push Capillary update to this agent? It will restart automatically.')) return;
+  const updateNode = async (id: string, os?: string, arch?: string) => {
+    if (!os && !confirm('Push Capillary update to this agent? It will restart automatically.')) return;
     setUpdating(id);
     try {
-      const r = await pushTunnelUpdate(id);
-      if (r.error) alert('Update failed: ' + r.error);
-      else alert('Update pushed successfully. Agent is restarting.');
+      const r = await pushTunnelUpdate(id, os, arch);
+      if (r.need_platform) {
+        const platform = prompt('Agent is too old to report its platform.\\nEnter platform (e.g. darwin/arm64, linux/amd64):');
+        if (platform) {
+          const [pOS, pArch] = platform.split('/');
+          setUpdating(null);
+          return updateNode(id, pOS, pArch);
+        }
+      } else if (r.error) {
+        alert('Update failed: ' + r.error);
+      } else {
+        alert('Update pushed successfully. Agent is restarting.');
+      }
     } catch (e: any) { alert('Update failed: ' + (e.message || e)); }
     setUpdating(null);
     load();
