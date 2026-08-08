@@ -669,7 +669,39 @@ func (e *Engine) executeScriptFilter(ctx context.Context, filter *Filter, envelo
 		return nil, fmt.Errorf("%s script output is not valid JSON: %v", filter.FilterType, err)
 	}
 
+	// Sync modified envelope fields back into rawPayload (HL7 MSH segment)
+	syncEnvelopeToRawPayload(&result, envelope)
+
 	return &FilterResult{Action: "pass", Output: &result}, nil
+}
+
+// syncEnvelopeToRawPayload updates HL7 MSH fields in RawPayload if the script
+// modified envelope fields like sendingFacility but didn't touch rawPayload.
+func syncEnvelopeToRawPayload(result, original *MessageEnvelope) {
+	if result.RawPayload == "" || result.RawPayload == original.RawPayload {
+		// Script didn't modify rawPayload directly — rebuild from envelope fields
+		lines := strings.Split(result.RawPayload, "\r")
+		if len(lines) == 0 || !strings.HasPrefix(lines[0], "MSH|") {
+			return
+		}
+		fields := strings.Split(lines[0], "|")
+		if len(fields) < 12 {
+			return
+		}
+		changed := false
+		if result.SendingFacility != original.SendingFacility && result.SendingFacility != "" {
+			fields[3] = result.SendingFacility
+			changed = true
+		}
+		if result.MessageType != original.MessageType && result.MessageType != "" {
+			fields[8] = result.MessageType + "^" + result.TriggerEvent
+			changed = true
+		}
+		if changed {
+			lines[0] = strings.Join(fields, "|")
+			result.RawPayload = strings.Join(lines, "\r")
+		}
+	}
 }
 
 // chainToRoute finds a route by ID and processes the message through it.

@@ -278,7 +278,21 @@ export default function RoutesPage() {
                         <option value="javascript">JavaScript</option><option value="conditional">Conditional</option><option value="python">Python</option><option value="bash">Bash</option><option value="dotnet">.NET</option><option value="connector">Connector</option><option value="lookup">Lookup</option>
                       </select>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
+                      <label className="flex items-center gap-1 text-[10px] text-gray-400 cursor-pointer">
+                        <input type="checkbox" checked={editingFilter.is_active} onChange={e => setEditingFilter({ ...editingFilter, is_active: e.target.checked })}
+                          className="w-3 h-3 accent-emerald-500" />
+                        Active
+                      </label>
+                      {editingFilter.filter_id && (
+                        <button onClick={async () => {
+                          if (!confirm(`Delete filter "${editingFilter.name}"?`)) return;
+                          await apiFetch(`/routes/${selectedRoute!.route_id}/filters/${editingFilter.execution_order}`, { method: 'DELETE' });
+                          const f = await getFilters(selectedRoute!.route_id);
+                          setFilters((f.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
+                          setEditingFilter(null);
+                        }} className="text-[10px] px-2 py-0.5 text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded">Delete</button>
+                      )}
                       <button onClick={() => setEditingFilter(null)} className="text-[10px] text-gray-500 hover:text-white">Cancel</button>
                       <button onClick={saveFilter} disabled={saving} className="text-[10px] px-2.5 py-1 bg-arteria-accent text-white rounded hover:bg-arteria-accent/80">{saving ? '...' : 'Save'}</button>
                     </div>
