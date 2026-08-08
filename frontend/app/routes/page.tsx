@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Sidebar from '@/components/Sidebar';
 import { getRoutes, getFilters, getCommPoints, createFilter, updateFilter, createRoute, updateRoute, deleteRoute, apiFetch, type Route, type Filter, type CommPoint } from '@/lib/api';
-import { ReactFlow, Background, Controls, useNodesState, useEdgesState, addEdge, Node, Edge, Connection, NodeTypes, Handle, Position } from '@xyflow/react';
+import { ReactFlow, Controls, useNodesState, useEdgesState, addEdge, Node, Edge, Connection, NodeTypes, Handle, Position } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Plus, Trash2, Edit2, GitBranch, Radio, Cpu, Send, Copy, ChevronRight } from 'lucide-react';
 
@@ -241,7 +241,7 @@ export default function RoutesPage() {
         </div>
 
         {/* Center: Canvas for selected route */}
-        <div className="flex-1 flex flex-col overflow-hidden max-w-[50%]">
+        <div className="flex-1 flex flex-col overflow-hidden">
           {selectedRoute ? (
             <>
               <div className="px-4 py-2 border-b border-arteria-border flex items-center justify-between shrink-0 bg-gray-900/30">
@@ -252,22 +252,22 @@ export default function RoutesPage() {
                 </div>
                 <button onClick={newFilter} className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 flex items-center gap-1"><Plus className="w-3 h-3" />Add Filter</button>
               </div>
-              <div className="flex-1">
+              <div className="shrink-0 relative overflow-x-auto border-b border-gray-800/30 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]" style={{ height: 280 }}>
+                <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/10 via-transparent to-purple-950/10 pointer-events-none" />
                 <ReactFlow
                   nodes={nodes} edges={edges}
                   onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                   onConnect={onConnect} onNodeClick={onNodeClick}
                   nodeTypes={nodeTypes} fitView
-                  className="!bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]"
+                  className="!bg-transparent"
                   proOptions={{ hideAttribution: true }}
                   defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { strokeWidth: 2 } }}
                 >
-                  <Background color="#1e293b" gap={24} size={0} />
                   <Controls className="!bg-slate-900/80 !border-slate-700 !rounded-xl !backdrop-blur-xl [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-gray-300" />
                 </ReactFlow>
               </div>
-              <div className="px-4 py-2 border-t border-arteria-border text-[10px] text-gray-600 shrink-0">
-                Click a filter node to edit • Drag to reorder • Double-click to rename • {filters.length} filter{filters.length !== 1 ? 's' : ''} in chain
+              <div className="px-4 py-2 border-b border-arteria-border text-[10px] text-gray-600 shrink-0">
+                Click a filter node to edit • Double-click source/dest to change CP • {filters.length} filter{filters.length !== 1 ? 's' : ''} in chain
               </div>
             </>
           ) : (
