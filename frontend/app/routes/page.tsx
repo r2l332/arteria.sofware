@@ -13,34 +13,43 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false 
 // --- Custom Nodes ---
 function SourceNode({ data }: { data: any }) {
   return (
-    <div className="px-4 py-3 rounded-xl border border-sky-700/60 bg-sky-950/80 backdrop-blur-sm shadow-xl min-w-[150px]">
-      <Handle type="source" position={Position.Right} className="!bg-sky-400 !w-3 !h-3 !border-2 !border-sky-900" />
-      <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-sky-500/20 flex items-center justify-center"><Radio className="w-4 h-4 text-sky-400" /></div>
-        <div><div className="text-xs font-semibold text-white">{data.label}</div><div className="text-[9px] text-sky-300/60 font-mono">{data.sub}</div></div>
+    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200">
+      <Handle type="source" position={Position.Right} className="!bg-sky-400 !w-2.5 !h-2.5" />
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center"><Radio className="w-4 h-4 text-sky-400" /></div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+        </div>
       </div>
     </div>
   );
 }
 function FilterNode({ data }: { data: any }) {
   return (
-    <div className={`px-3 py-2.5 rounded-xl border backdrop-blur-sm shadow-lg min-w-[130px] ${data.active !== false ? 'border-amber-700/60 bg-amber-950/80' : 'border-gray-700 bg-gray-900/80 opacity-40'}`}>
-      <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-2.5 !h-2.5 !border-2 !border-amber-900" />
-      <Handle type="source" position={Position.Right} className="!bg-amber-400 !w-2.5 !h-2.5 !border-2 !border-amber-900" />
-      <div className="flex items-center gap-2">
-        <Cpu className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-        <div><div className="text-[10px] font-medium text-white truncate max-w-[90px]">{data.label}</div><div className="text-[8px] text-amber-300/50">{data.sub}</div></div>
+    <div className={`w-[160px] rounded-xl border p-3 backdrop-blur-xl shadow-2xl hover:scale-[1.04] transition-all duration-200 ${data.active !== false ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-900/40 border-slate-800/50 opacity-50'}`}>
+      <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-2.5 !h-2.5" />
+      <Handle type="source" position={Position.Right} className="!bg-amber-400 !w-2.5 !h-2.5" />
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center"><Cpu className="w-4 h-4 text-amber-400" /></div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+        </div>
       </div>
     </div>
   );
 }
 function DestNode({ data }: { data: any }) {
   return (
-    <div className="px-4 py-3 rounded-xl border border-emerald-700/60 bg-emerald-950/80 backdrop-blur-sm shadow-xl min-w-[150px]">
-      <Handle type="target" position={Position.Left} className="!bg-emerald-400 !w-3 !h-3 !border-2 !border-emerald-900" />
-      <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center"><Send className="w-4 h-4 text-emerald-400" /></div>
-        <div><div className="text-xs font-semibold text-white">{data.label}</div><div className="text-[9px] text-emerald-300/60 font-mono">{data.sub}</div></div>
+    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200">
+      <Handle type="target" position={Position.Left} className="!bg-emerald-400 !w-2.5 !h-2.5" />
+      <div className="flex items-center gap-2 mb-1">
+        <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center"><Send className="w-4 h-4 text-emerald-400" /></div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+        </div>
       </div>
     </div>
   );
@@ -223,11 +232,12 @@ export default function RoutesPage() {
                   onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                   onConnect={onConnect} onNodeClick={onNodeClick}
                   nodeTypes={nodeTypes} fitView
-                  className="bg-gray-950"
+                  className="!bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]"
                   proOptions={{ hideAttribution: true }}
+                  defaultEdgeOptions={{ type: 'smoothstep', animated: true, style: { strokeWidth: 2 } }}
                 >
-                  <Background color="#1e293b" gap={24} size={1} />
-                  <Controls className="!bg-gray-900 !border-gray-700 !rounded-lg [&>button]:!bg-gray-800 [&>button]:!border-gray-700 [&>button]:!text-gray-300" />
+                  <Background color="#1e293b" gap={24} size={0} />
+                  <Controls className="!bg-slate-900/80 !border-slate-700 !rounded-xl !backdrop-blur-xl [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-gray-300" />
                 </ReactFlow>
               </div>
               <div className="px-4 py-2 border-t border-arteria-border text-[10px] text-gray-600 shrink-0">
