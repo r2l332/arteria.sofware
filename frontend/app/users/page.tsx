@@ -112,7 +112,7 @@ export default function UsersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.filter(u => u.username).map(u => (
+                  {users.filter(u => u.username && u.role !== 'super_admin' && u.role !== 'devops').map(u => (
                     <tr key={u.user_id} className="border-b border-arteria-border/50 hover:bg-white/[0.015] transition-colors">
                       <td className="py-3 px-5">
                         <div className="flex items-center gap-3">
@@ -128,7 +128,7 @@ export default function UsersPage() {
                           onChange={(e) => updateRole(u.user_id, e.target.value)}
                           className={`badge cursor-pointer ${roleColor[u.role] || roleColor.viewer}`}
                         >
-                          {roles.map(r => <option key={r.role} value={r.role}>{r.role}</option>)}
+                          {roles.filter(r => r.role !== 'super_admin' && r.role !== 'devops').map(r => <option key={r.role} value={r.role}>{r.role}</option>)}
                         </select>
                       </td>
                       <td className="py-3 px-5">
@@ -188,7 +188,7 @@ export default function UsersPage() {
               <div>
                 <label className="label">Role</label>
                 <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} className="select">
-                  {roles.map(r => <option key={r.role} value={r.role}>{r.role}</option>)}
+                  {roles.filter(r => r.role !== 'super_admin' && r.role !== 'devops').map(r => <option key={r.role} value={r.role}>{r.role}</option>)}
                 </select>
               </div>
               {error && (

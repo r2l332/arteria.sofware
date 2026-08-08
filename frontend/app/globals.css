@@ -3,6 +3,28 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --arteria-bg: #09090b;
+    --arteria-surface: #111113;
+    --arteria-card: #18181b;
+    --arteria-border: #27272a;
+    --arteria-border-hover: #3f3f46;
+    --arteria-muted: #71717a;
+    --arteria-text: #fafafa;
+    --arteria-text-secondary: #a1a1aa;
+  }
+
+  .light {
+    --arteria-bg: #f8fafc;
+    --arteria-surface: #ffffff;
+    --arteria-card: #ffffff;
+    --arteria-border: #e2e8f0;
+    --arteria-border-hover: #cbd5e1;
+    --arteria-muted: #64748b;
+    --arteria-text: #0f172a;
+    --arteria-text-secondary: #475569;
+  }
+
   body {
     @apply bg-arteria-bg text-arteria-text font-sans antialiased;
   }

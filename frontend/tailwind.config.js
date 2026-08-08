@@ -9,19 +9,19 @@ module.exports = {
     extend: {
       colors: {
         arteria: {
-          bg: '#09090b',
-          surface: '#111113',
-          card: '#18181b',
-          border: '#27272a',
-          'border-hover': '#3f3f46',
+          bg: 'var(--arteria-bg)',
+          surface: 'var(--arteria-surface)',
+          card: 'var(--arteria-card)',
+          border: 'var(--arteria-border)',
+          'border-hover': 'var(--arteria-border-hover)',
           accent: '#6366f1',
           'accent-hover': '#818cf8',
           success: '#10b981',
           error: '#ef4444',
           warning: '#f59e0b',
-          muted: '#71717a',
-          text: '#fafafa',
-          'text-secondary': '#a1a1aa',
+          muted: 'var(--arteria-muted)',
+          text: 'var(--arteria-text)',
+          'text-secondary': 'var(--arteria-text-secondary)',
         },
       },
       fontFamily: {

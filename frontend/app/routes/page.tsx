@@ -106,14 +106,39 @@ export default function RoutesPage() {
     setNodes(n); setEdges(e);
   }, [selectedRoute, filters, commPoints]);
 
+  const [editingCP, setEditingCP] = useState<'source' | 'dest' | null>(null);
+
   const onNodeClick = useCallback((_: any, node: Node) => {
     if (node.id.startsWith('f-')) {
       const idx = parseInt(node.id.split('-')[1]);
       if (filters[idx]) { setEditingFilter(filters[idx]); setEditorValue(filters[idx].js_script || getDefaultScript(filters[idx].filter_type)); }
+    } else if (node.id === 'src') {
+      setEditingCP('source');
+    } else if (node.id === 'dst') {
+      setEditingCP('dest');
     }
   }, [filters]);
 
   const onConnect = useCallback((conn: Connection) => { setEdges(eds => addEdge({ ...conn, animated: true }, eds)); }, []);
+
+  // Delete filter on Backspace/Delete key when a filter node is selected
+  const onKeyDown = useCallback(async (e: KeyboardEvent) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && editingFilter && selectedRoute) {
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (!confirm(`Delete filter "${editingFilter.name}"?`)) return;
+      if (editingFilter.filter_id) {
+        await apiFetch(`/routes/${selectedRoute.route_id}/filters/${editingFilter.execution_order}`, { method: 'DELETE' });
+        const f = await getFilters(selectedRoute.route_id);
+        setFilters((f.filters || []).sort((a: Filter, b: Filter) => a.execution_order - b.execution_order));
+      }
+      setEditingFilter(null);
+    }
+  }, [editingFilter, selectedRoute]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onKeyDown]);
 
   const newFilter = () => {
     if (!selectedRoute) return;
@@ -214,7 +239,7 @@ export default function RoutesPage() {
           )}
         </div>
 
-        {/* Right panel: Filter editor */}
+        {/* Right panel: Filter editor OR CP editor */}
         {editingFilter && (
           <div className="w-[400px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0">
             <div className="px-4 py-2.5 border-b border-arteria-border flex items-center justify-between shrink-0">
@@ -235,6 +260,28 @@ export default function RoutesPage() {
                 theme="vs-dark" value={editorValue} onChange={v => setEditorValue(v || '')}
                 options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: 'on', scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 8 } }} />
             </div>
+          </div>
+        )}
+
+        {editingCP && selectedRoute && (
+          <div className="w-[300px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0 p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-white">{editingCP === 'source' ? 'Source' : 'Destination'} CP</h3>
+              <button onClick={() => setEditingCP(null)} className="text-gray-500 hover:text-white text-xs">✕</button>
+            </div>
+            <select value={editingCP === 'source' ? selectedRoute.source_comm_point_id : selectedRoute.dest_comm_point_id}
+              onChange={async (e) => {
+                const field = editingCP === 'source' ? 'source_comm_point_id' : 'dest_comm_point_id';
+                await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ [field]: e.target.value }) });
+                loadRoutes();
+                setEditingCP(null);
+              }}
+              className="w-full px-3 py-2 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white">
+              {commPoints.filter(c => editingCP === 'source' ? c.direction === 'INPUT' : c.direction === 'OUTPUT').map(c => (
+                <option key={c.comm_point_id} value={c.comm_point_id}>{c.name} ({c.protocol}:{c.port})</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-gray-600 mt-2">Select a different {editingCP === 'source' ? 'input' : 'output'} communication point for this route.</p>
           </div>
         )}
 
