@@ -7,7 +7,16 @@
 # --with-broker: also rebuilds tunnel-broker (disconnects Capillary agents briefly)
 
 set -e
-cd ~/arteria.sofware
+
+# Find the repo directory
+if [ -d ~/arteria.sofware ]; then
+  cd ~/arteria.sofware
+elif [ -d ~/arteria.app ]; then
+  cd ~/arteria.app
+else
+  echo "Error: cannot find arteria repo in home directory"
+  exit 1
+fi
 
 SERVICES="api processing frontend egress ingestion"
 
@@ -26,10 +35,16 @@ echo ""
 echo "Pulling latest code..."
 git pull origin main
 
-echo "Rebuilding services..."
+echo "Ensuring infrastructure services are running..."
+docker compose up -d nats scylladb caddy
+
+echo "Waiting for ScyllaDB health..."
+docker compose up -d scylla-init
+
+echo "Rebuilding app services..."
 docker compose build $SERVICES
 
-echo "Restarting services..."
+echo "Restarting app services..."
 docker compose up -d --no-deps $SERVICES
 
 echo "Waiting for startup..."
