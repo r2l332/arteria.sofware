@@ -166,8 +166,10 @@ services:
       SCYLLA_HOST: scylladb
       NATS_URL: nats://nats:4222
       CA_DIR: /data/ca
+      CAPILLARY_DIST_DIR: /dist
     volumes:
       - tunnel_ca:/data/ca
+      - ./dist:/dist:ro
     depends_on:
       nats:
         condition: service_healthy

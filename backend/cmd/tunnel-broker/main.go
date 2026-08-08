@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -206,21 +207,32 @@ func main() {
 		msg.Respond(resp)
 	})
 
-	// Push update to a connected agent
+	// Push update to a connected agent — reads binary from local disk
 	nc.Subscribe("arteria.tunnel.update", func(msg *nats.Msg) {
 		var req struct {
 			NodeID  string `json:"node_id"`
 			Version string `json:"version"`
-			Binary  []byte `json:"binary"`
-			SHA256  string `json:"sha256"`
+			OS      string `json:"os"`
+			Arch    string `json:"arch"`
 		}
 		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": "invalid request"})
 			msg.Respond(resp)
 			return
 		}
-		tunnelLog(nc, "[BROKER] pushing update v%s to node %s (%d bytes)", req.Version, req.NodeID[:8], len(req.Binary))
-		if err := broker.PushUpdate(req.NodeID, req.Version, req.Binary, req.SHA256); err != nil {
+
+		distDir := envOr("CAPILLARY_DIST_DIR", "/dist")
+		binaryPath := fmt.Sprintf("%s/capillary-%s-%s-%s", distDir, req.Version, req.OS, req.Arch)
+		binary, err := os.ReadFile(binaryPath)
+		if err != nil {
+			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": fmt.Sprintf("binary not found: %s", binaryPath)})
+			msg.Respond(resp)
+			return
+		}
+
+		sha := fmt.Sprintf("%x", sha256.Sum256(binary))
+		tunnelLog(nc, "[BROKER] pushing update v%s to node %s (%d bytes, sha=%s)", req.Version, req.NodeID[:8], len(binary), sha[:12])
+		if err := broker.PushUpdate(req.NodeID, req.Version, binary, sha); err != nil {
 			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": err.Error()})
 			msg.Respond(resp)
 			return

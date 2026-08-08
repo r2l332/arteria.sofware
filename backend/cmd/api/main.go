@@ -1784,19 +1784,17 @@ func pushTunnelUpdateHandler(nc *nats.Conn) fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "agent too old to report OS/arch — select platform manually", "need_platform": true})
 		}
 
-		// Read the appropriate pre-built binary
+		// Read the appropriate pre-built binary — verify it exists
 		binaryDir := envOrDefault("CAPILLARY_DIST_DIR", "/dist")
 		version := envOrDefault("CAPILLARY_VERSION", "0.2.0")
 		binaryName := fmt.Sprintf("capillary-%s-%s-%s", version, agentOS, agentArch)
-		binary, err := os.ReadFile(binaryDir + "/" + binaryName)
-		if err != nil {
+		if _, err := os.Stat(binaryDir + "/" + binaryName); err != nil {
 			return c.Status(404).JSON(fiber.Map{"error": fmt.Sprintf("binary not found: %s (build with scripts/build-capillary.sh)", binaryName)})
 		}
 
-		// Push to broker which pushes to agent
+		// Tell broker to read binary from its own /dist mount and push to agent
 		reqData, _ := json.Marshal(map[string]interface{}{
-			"node_id": nodeID, "version": version,
-			"binary": binary, "sha256": fmt.Sprintf("%x", sha256Sum(binary)),
+			"node_id": nodeID, "version": version, "os": agentOS, "arch": agentArch,
 		})
 		resp, err := nc.Request("arteria.tunnel.update", reqData, 30*time.Second)
 		if err != nil {
