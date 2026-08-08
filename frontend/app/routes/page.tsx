@@ -240,7 +240,7 @@ export default function RoutesPage() {
           </div>
         </div>
 
-        {/* Center: Canvas for selected route */}
+        {/* Center: Canvas + editor below */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {selectedRoute ? (
             <>
@@ -252,7 +252,7 @@ export default function RoutesPage() {
                 </div>
                 <button onClick={newFilter} className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 flex items-center gap-1"><Plus className="w-3 h-3" />Add Filter</button>
               </div>
-              <div className="shrink-0 relative overflow-x-auto border-b border-gray-800/30 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]" style={{ height: 280 }}>
+              <div className="shrink-0 relative overflow-x-auto border-b border-gray-800/30 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]" style={{ height: 220 }}>
                 <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/10 via-transparent to-purple-950/10 pointer-events-none" />
                 <ReactFlow
                   nodes={nodes} edges={edges}
@@ -266,59 +266,58 @@ export default function RoutesPage() {
                   <Controls className="!bg-slate-900/80 !border-slate-700 !rounded-xl !backdrop-blur-xl [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-gray-300" />
                 </ReactFlow>
               </div>
-              <div className="px-4 py-2 border-b border-arteria-border text-[10px] text-gray-600 shrink-0">
-                Click a filter node to edit • Double-click source/dest to change CP • {filters.length} filter{filters.length !== 1 ? 's' : ''} in chain
-              </div>
+
+              {/* Editor panel below canvas */}
+              {editingFilter ? (
+                <div className="flex-1 flex flex-col overflow-hidden border-t border-arteria-border">
+                  <div className="px-4 py-2 border-b border-arteria-border flex items-center justify-between shrink-0 bg-gray-900/30">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-3.5 h-3.5 text-amber-400" />
+                      <input value={editingFilter.name} onChange={e => setEditingFilter({ ...editingFilter, name: e.target.value })} className="bg-transparent text-white text-sm font-medium border-b border-gray-700 focus:border-arteria-accent outline-none w-32" />
+                      <select value={editingFilter.filter_type} onChange={e => { setEditingFilter({ ...editingFilter, filter_type: e.target.value }); setEditorValue(getDefaultScript(e.target.value)); }} className="bg-gray-800 text-[10px] text-gray-300 border border-gray-700 rounded px-1.5 py-0.5">
+                        <option value="javascript">JavaScript</option><option value="conditional">Conditional</option><option value="python">Python</option><option value="bash">Bash</option><option value="dotnet">.NET</option><option value="connector">Connector</option><option value="lookup">Lookup</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => setEditingFilter(null)} className="text-[10px] text-gray-500 hover:text-white">Cancel</button>
+                      <button onClick={saveFilter} disabled={saving} className="text-[10px] px-2.5 py-1 bg-arteria-accent text-white rounded hover:bg-arteria-accent/80">{saving ? '...' : 'Save'}</button>
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <MonacoEditor height="100%"
+                      language={editingFilter.filter_type === 'python' ? 'python' : editingFilter.filter_type === 'bash' ? 'shell' : editingFilter.filter_type === 'dotnet' ? 'csharp' : editingFilter.filter_type === 'connector' ? 'json' : 'javascript'}
+                      theme="vs-dark" value={editorValue} onChange={v => setEditorValue(v || '')}
+                      options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: 'on', scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 8 } }} />
+                  </div>
+                </div>
+              ) : editingCP && selectedRoute ? (
+                <div className="shrink-0 px-4 py-3 border-t border-arteria-border bg-gray-900/30">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-medium text-white">{editingCP === 'source' ? 'Source' : 'Destination'} CP:</span>
+                    <select value={editingCP === 'source' ? selectedRoute.source_comm_point_id : selectedRoute.dest_comm_point_id}
+                      onChange={async (e) => {
+                        const field = editingCP === 'source' ? 'source_comm_point_id' : 'dest_comm_point_id';
+                        await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ [field]: e.target.value }) });
+                        loadRoutes(); setEditingCP(null);
+                      }}
+                      className="flex-1 px-3 py-1.5 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white">
+                      {commPoints.filter(c => editingCP === 'source' ? c.direction === 'INPUT' : c.direction === 'OUTPUT').map(c => (
+                        <option key={c.comm_point_id} value={c.comm_point_id}>{c.name} ({c.protocol}:{c.port})</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setEditingCP(null)} className="text-xs text-gray-500 hover:text-white">✕</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 py-2 text-[10px] text-gray-600 shrink-0">
+                  Click a filter node to edit • Double-click source/dest to change CP • {filters.length} filter{filters.length !== 1 ? 's' : ''} in chain
+                </div>
+              )}
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">Select a route from the left panel or create a new one</div>
           )}
         </div>
-
-        {/* Right panel: Filter editor OR CP editor */}
-        {editingFilter && (
-          <div className="w-[400px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0">
-            <div className="px-4 py-2.5 border-b border-arteria-border flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2">
-                <input value={editingFilter.name} onChange={e => setEditingFilter({ ...editingFilter, name: e.target.value })} className="bg-transparent text-white text-sm font-medium border-b border-gray-700 focus:border-arteria-accent outline-none w-28" />
-                <select value={editingFilter.filter_type} onChange={e => { setEditingFilter({ ...editingFilter, filter_type: e.target.value }); setEditorValue(getDefaultScript(e.target.value)); }} className="bg-gray-800 text-[10px] text-gray-300 border border-gray-700 rounded px-1.5 py-0.5">
-                  <option value="javascript">JavaScript</option><option value="conditional">Conditional</option><option value="python">Python</option><option value="bash">Bash</option><option value="dotnet">.NET</option><option value="connector">Connector</option><option value="lookup">Lookup</option>
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setEditingFilter(null)} className="text-[10px] text-gray-500 hover:text-white">Cancel</button>
-                <button onClick={saveFilter} disabled={saving} className="text-[10px] px-2.5 py-1 bg-arteria-accent text-white rounded hover:bg-arteria-accent/80">{saving ? '...' : 'Save'}</button>
-              </div>
-            </div>
-            <div className="flex-1">
-              <MonacoEditor height="100%"
-                language={editingFilter.filter_type === 'python' ? 'python' : editingFilter.filter_type === 'bash' ? 'shell' : editingFilter.filter_type === 'dotnet' ? 'csharp' : editingFilter.filter_type === 'connector' ? 'json' : 'javascript'}
-                theme="vs-dark" value={editorValue} onChange={v => setEditorValue(v || '')}
-                options={{ minimap: { enabled: false }, fontSize: 12, lineNumbers: 'on', scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 8 } }} />
-            </div>
-          </div>
-        )}
-
-        {editingCP && selectedRoute && (
-          <div className="w-[280px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-white">{editingCP === 'source' ? 'Source' : 'Destination'} CP</h3>
-              <button onClick={() => setEditingCP(null)} className="text-gray-500 hover:text-white text-xs">✕</button>
-            </div>
-            <select value={editingCP === 'source' ? selectedRoute.source_comm_point_id : selectedRoute.dest_comm_point_id}
-              onChange={async (e) => {
-                const field = editingCP === 'source' ? 'source_comm_point_id' : 'dest_comm_point_id';
-                await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ [field]: e.target.value }) });
-                loadRoutes(); setEditingCP(null);
-              }}
-              className="w-full px-3 py-2 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white">
-              {commPoints.filter(c => editingCP === 'source' ? c.direction === 'INPUT' : c.direction === 'OUTPUT').map(c => (
-                <option key={c.comm_point_id} value={c.comm_point_id}>{c.name} ({c.protocol}:{c.port})</option>
-              ))}
-            </select>
-            <p className="text-[9px] text-gray-600 mt-2">Or double-click the node on the canvas to change inline.</p>
-          </div>
-        )}
 
         {/* New Route Modal */}
         {showNewRoute && <NewRouteModal commPoints={commPoints} onClose={() => setShowNewRoute(false)} onCreated={loadRoutes} />}
