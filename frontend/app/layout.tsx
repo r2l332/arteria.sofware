@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthGate } from '@/components/AuthGate';
+import { ToastContainer } from '@/components/Toast';
 import { BrandingProvider } from '@/lib/branding';
 import { ThemeProvider } from '@/lib/theme';
 
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <BrandingProvider>
             <AuthGate>{children}</AuthGate>
+            <ToastContainer />
           </BrandingProvider>
         </ThemeProvider>
       </body>

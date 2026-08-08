@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { getTunnelNodes, createTunnelNode, deleteTunnelNode, getTunnelMappings, createTunnelMapping, pushTunnelUpdate } from '@/lib/api';
+import { toast } from '@/components/Toast';
 
 interface TunnelNode {
   node_id: string;
@@ -74,11 +75,11 @@ export default function TunnelPage() {
           return updateNode(id, pOS, pArch);
         }
       } else if (r.error) {
-        alert('Update failed: ' + r.error);
+        toast('Update failed: ' + r.error, 'error');
       } else {
-        alert('Update pushed successfully. Agent is restarting.');
+        toast('Update pushed — agent is restarting', 'success');
       }
-    } catch (e: any) { alert('Update failed: ' + (e.message || e)); }
+    } catch (e: any) { toast('Update failed: ' + (e.message || e), 'error'); }
     setUpdating(null);
     load();
   };
