@@ -12,6 +12,7 @@ import (
 	"github.com/gocql/gocql"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+	"github.com/r2l332/arteria.app/backend/pkg/delivery"
 	"github.com/r2l332/arteria.app/backend/pkg/engine"
 	"github.com/r2l332/arteria.app/backend/pkg/hl7"
 	"github.com/r2l332/arteria.app/backend/pkg/logging"
@@ -33,6 +34,7 @@ var log *logging.Logger
 var met *metrics.Counters
 var registry *plugin.Registry
 var nc *nats.Conn
+var deliverer *delivery.Deliverer
 
 func main() {
 	var err error
@@ -73,6 +75,9 @@ func main() {
 
 	// Initialize metrics
 	met = metrics.New()
+
+	// Initialize delivery (delivers to output CPs directly from processing)
+	deliverer = delivery.New(nc, session)
 
 	// Serve metrics via NATS request-reply
 	nc.Subscribe("arteria.metrics.processing", func(msg *nats.Msg) {
@@ -116,6 +121,13 @@ func main() {
 	defer sub.Unsubscribe()
 
 	log.Info("subscribed to ingest stream", logging.Fields{"subject": subjectRaw, "consumer": consumerName})
+
+	// Reload delivery output CPs periodically
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for { select { case <-ctx.Done(): return; case <-ticker.C: deliverer.LoadOutputCPs() } }
+	}()
 
 	// Wait for shutdown
 	sigCh := make(chan os.Signal, 1)
@@ -240,7 +252,7 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 			"message_id": msgID.String(), "message_type": parsed.MessageType,
 			"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
 			"sending_facility": parsed.SendingFacility, "status": "ERROR",
-			"error": result.Err.Error(),
+			"route_id": result.RouteID, "error": result.Err.Error(),
 		}))
 
 		m.Ack()
@@ -290,12 +302,28 @@ func handleMessage(ctx context.Context, m *nats.Msg, js nats.JetStreamContext, s
 	met.Processed.Add(1)
 	met.Routed.Add(1)
 
+	// Deliver directly to output CPs (no separate egress service needed)
+	go func() {
+		delivered, failed := deliverer.DeliverToTargets([]byte(wirePayload), destCPIDs, destTopic)
+		if delivered > 0 {
+			updateMessageStatus(session, gocqlID, "DELIVERED", "", now)
+			nc.Publish("arteria.events.delivered", mustJSON(map[string]interface{}{
+				"message_id": msgID.String(), "message_type": parsed.MessageType,
+				"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
+				"status": "DELIVERED", "delivered_to": delivered,
+			}))
+		}
+		if failed > 0 {
+			log.Warn("some deliveries failed", logging.Fields{"message_id": msgID.String(), "delivered": delivered, "failed": failed})
+		}
+	}()
+
 	// Emit routed event for WebSocket streaming
 	nc.Publish("arteria.events.routed", mustJSON(map[string]interface{}{
 		"message_id": msgID.String(), "message_type": parsed.MessageType,
 		"trigger_event": parsed.TriggerEvent, "patient_id": parsed.PatientID,
 		"sending_facility": parsed.SendingFacility, "status": "ROUTED",
-		"route_name": destTopic, "size_bytes": len(wirePayload),
+		"route_name": destTopic, "route_id": result.RouteID, "size_bytes": len(wirePayload),
 	}))
 
 	log.Info("message processed and routed", logging.Fields{

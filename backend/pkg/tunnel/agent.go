@@ -21,6 +21,7 @@ type Agent struct {
 	tlsCfg       *tls.Config
 	session      *yamux.Session
 	control      net.Conn
+	controlEnc   *json.Encoder // for sending log messages back to broker
 	listeners    map[int]net.Listener
 	mu           sync.Mutex
 	quit         chan struct{}
@@ -207,8 +208,22 @@ func (a *Agent) dial() error {
 
 	a.session = session
 	a.control = controlStream
+	a.controlEnc = json.NewEncoder(controlStream)
+	log.SetOutput(io.MultiWriter(os.Stderr, &agentLogForwarder{agent: a}))
 	log.Printf("[AGENT] connected to broker as node %s", a.nodeID)
 	return nil
+}
+
+// agentLogForwarder sends log lines back to the broker via the control stream.
+type agentLogForwarder struct{ agent *Agent }
+
+func (w *agentLogForwarder) Write(p []byte) (int, error) {
+	line := string(p)
+	if w.agent.controlEnc != nil {
+		payload, _ := json.Marshal(map[string]string{"line": line})
+		w.agent.controlEnc.Encode(ControlMessage{Type: "log", Payload: payload})
+	}
+	return len(p), nil
 }
 
 func (a *Agent) runLoop() {

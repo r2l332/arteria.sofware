@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,6 +31,21 @@ import (
 var sessionTracker *auth.SessionTracker
 var natsConn *nats.Conn // Package-level for config change events
 
+// Ring buffer for Capillary (tunnel agent) logs received via NATS
+var capillaryLogs struct {
+	sync.Mutex
+	lines []string
+}
+
+func appendCapillaryLog(line string) {
+	capillaryLogs.Lock()
+	capillaryLogs.lines = append(capillaryLogs.lines, line)
+	if len(capillaryLogs.lines) > 2000 {
+		capillaryLogs.lines = capillaryLogs.lines[len(capillaryLogs.lines)-1000:]
+	}
+	capillaryLogs.Unlock()
+}
+
 func main() {
 	log, err := logging.FromEnv("api")
 	if err != nil {
@@ -50,6 +66,11 @@ func main() {
 	}
 	defer nc.Close()
 	natsConn = nc
+
+	// Subscribe to Capillary agent logs relayed by the broker
+	nc.Subscribe("arteria.events.tunnel.log", func(msg *nats.Msg) {
+		appendCapillaryLog(strings.TrimRight(string(msg.Data), "\n"))
+	})
 
 	scyllaCfg := scyllautil.DefaultConfig()
 	scyllaCfg.Hosts = strings.Split(scyllaHost, ",")
@@ -211,6 +232,7 @@ func main() {
 		api.Put("/routes/:id", auth.RequirePermission(auth.PermRouteManage), updateRoute(session))
 		api.Delete("/routes/:id", auth.RequirePermission(auth.PermRouteManage), deleteRoute(session))
 		api.Post("/routes/:id/clone", auth.RequirePermission(auth.PermRouteManage), cloneRoute(session))
+		api.Get("/routes/:id/recent", auth.RequirePermission(auth.PermRouteView), getRouteRecentMessages(session))
 
 		api.Get("/routes/:id/filters", auth.RequirePermission(auth.PermRouteView), listFilters(session))
 		api.Post("/routes/:id/filters", auth.RequirePermission(auth.PermRouteManage), createFilter(session))
@@ -676,6 +698,35 @@ func cloneRoute(session *gocql.Session) fiber.Handler {
 		iter.Close()
 		publishConfigChange(natsConn, "route", "cloned", newID.String())
 		return c.Status(201).JSON(fiber.Map{"route_id": newID.String(), "name": name + " (Copy)"})
+	}
+}
+
+func getRouteRecentMessages(session *gocql.Session) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		routeID, err := gocql.ParseUUID(c.Params("id"))
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
+		}
+		limit := c.QueryInt("limit", 20)
+		if limit > 100 {
+			limit = 100
+		}
+		var items []fiber.Map
+		iter := session.Query(`SELECT message_id, patient_id, message_type, trigger_event, sending_facility, status, created_at FROM arteria.messages WHERE route_id = ? LIMIT ? ALLOW FILTERING`, routeID, limit).Iter()
+		var id gocql.UUID
+		var pid, mt, te, sf, st string
+		var ca time.Time
+		for iter.Scan(&id, &pid, &mt, &te, &sf, &st, &ca) {
+			items = append(items, fiber.Map{
+				"message_id": id.String(), "patient_id": pid, "message_type": mt,
+				"trigger_event": te, "sending_facility": sf, "status": st, "created_at": ca,
+			})
+		}
+		iter.Close()
+		if items == nil {
+			items = []fiber.Map{}
+		}
+		return c.JSON(fiber.Map{"messages": items, "count": len(items)})
 	}
 }
 
@@ -2372,6 +2423,17 @@ func getServiceLogs() fiber.Handler {
 		service := c.Params("service")
 		lines := c.QueryInt("lines", 100)
 
+		// Capillary logs come from NATS, not disk
+		if service == "capillary" {
+			capillaryLogs.Lock()
+			all := make([]string, len(capillaryLogs.lines))
+			copy(all, capillaryLogs.lines)
+			capillaryLogs.Unlock()
+			start := len(all) - lines
+			if start < 0 { start = 0 }
+			return c.JSON(fiber.Map{"service": "capillary", "logs": all[start:], "total_lines": len(all), "showing": len(all) - start})
+		}
+
 		// Allowed services
 		allowed := map[string]string{
 			"api":        "/var/log/arteria/api.log",
@@ -2383,7 +2445,7 @@ func getServiceLogs() fiber.Handler {
 
 		logFile, ok := allowed[service]
 		if !ok {
-			return c.Status(400).JSON(fiber.Map{"error": "unknown service", "allowed": []string{"api", "ingestion", "processing", "egress", "broker"}})
+			return c.Status(400).JSON(fiber.Map{"error": "unknown service", "allowed": []string{"api", "ingestion", "processing", "egress", "broker", "capillary"}})
 		}
 
 		// Read last N lines from log file

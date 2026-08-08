@@ -63,47 +63,48 @@ export default function FlowPage() {
   useEffect(() => {
     if (!selectedRouteId) return;
     getFilters(selectedRouteId).then(r => setFilters((r.filters || []).sort((a, b) => a.execution_order - b.execution_order))).catch(() => setFilters([]));
-    getRouteRecent(selectedRouteId, 8).then(r => setRecentMsgs(r.messages || [])).catch(() => {});
+    getRouteRecent(selectedRouteId, 50).then(r => {
+      const msgs = r.messages || [];
+      setRecentMsgs(msgs.slice(0, 8));
+      // Per-route counts from actual messages
+      counts.current.received = msgs.length;
+      counts.current.routed = msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length;
+      counts.current.errors = msgs.filter((m: any) => m.status === 'ERROR').length;
+    }).catch(() => {});
   }, [selectedRouteId]);
 
   // WebSocket for real-time push + HTTP polling fallback
   useEffect(() => {
     const ws = connectFlowWebSocket((event: StreamEvent) => {
       if (event.type === 'message' || event.type === 'error') {
-        const msg = event.data as LiveMessage;
+        const msg = event.data as any;
         msg.timestamp = event.timestamp;
-        setLiveMessages(prev => [msg, ...prev].slice(0, 30));
+        // Only count events belonging to the selected route
+        const eventRouteId = msg.route_id || '';
+        if (selectedRouteId && eventRouteId && eventRouteId !== selectedRouteId) return;
+        setLiveMessages(prev => [msg as LiveMessage, ...prev].slice(0, 30));
         if (msg.stage === 'received') counts.current.received++;
         if (msg.stage === 'routed') counts.current.routed++;
         if (msg.stage === 'error') counts.current.errors++;
       }
       if (event.type === 'metric') {
         setMetrics(event.data);
-        if (event.data.received && counts.current.received === 0) {
-          counts.current.received = event.data.received;
-          counts.current.routed = event.data.routed || 0;
-          counts.current.errors = event.data.errors || 0;
-        }
       }
     });
     wsRef.current = ws;
 
-    // HTTP polling fallback (in case WebSocket doesn't connect through proxy)
-    const { getMetrics } = require('@/lib/api');
+    // Periodic refresh of per-route counts
     const poll = setInterval(() => {
-      getMetrics().then((m: any) => {
-        if (m) {
-          setMetrics(m.processing || m);
-          if (m.processing?.received) {
-            counts.current.received = m.processing.received;
-            counts.current.routed = m.processing.routed || 0;
-            counts.current.errors = m.processing.errors || 0;
-          }
-        }
+      if (!selectedRouteId) return;
+      getRouteRecent(selectedRouteId, 50).then(r => {
+        const msgs = r.messages || [];
+        counts.current.received = msgs.length;
+        counts.current.routed = msgs.filter((m: any) => m.status === 'ROUTED' || m.status === 'DELIVERED').length;
+        counts.current.errors = msgs.filter((m: any) => m.status === 'ERROR').length;
       }).catch(() => {});
-    }, 3000);
+    }, 5000);
     return () => { ws?.close(); clearInterval(poll); };
-  }, []);
+  }, [selectedRouteId]);
 
   const openTrace = async (msgId: string) => {
     const r = await getMessageTrace(msgId).catch(() => null);

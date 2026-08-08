@@ -31,7 +31,7 @@ type NodeConfig struct {
 
 // ControlMessage is the envelope for control-plane messages over yamux stream 0.
 type ControlMessage struct {
-	Type    string          `json:"type"` // "config_push", "heartbeat", "enroll_response"
+	Type    string          `json:"type"` // "config_push", "heartbeat", "enroll_response", "log"
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -67,6 +67,7 @@ type Broker struct {
 	getConfig  func(nodeID string) *NodeConfig
 	enrollNode func(req EnrollRequest) (*EnrollResponse, error)
 	onInbound  func(nodeID string, targetPort int, data []byte) // Called when data arrives from agent
+	onAgentLog func(nodeID, line string) // Called when agent sends a log line
 }
 
 // BrokerSession represents one connected agent.
@@ -88,6 +89,7 @@ type BrokerConfig struct {
 	OnConnect  func(nodeID string)
 	OnDisconn  func(nodeID string)
 	OnInbound  func(nodeID string, targetPort int, data []byte) // Route inbound traffic via NATS
+	OnAgentLog func(nodeID, line string) // Forward agent log lines
 }
 
 // NewBroker creates a new tunnel broker.
@@ -115,6 +117,7 @@ func NewBroker(cfg BrokerConfig) (*Broker, error) {
 		onConnect:  cfg.OnConnect,
 		onDisconn:  cfg.OnDisconn,
 		onInbound:  cfg.OnInbound,
+		onAgentLog: cfg.OnAgentLog,
 	}
 
 	go b.acceptLoop()
@@ -242,8 +245,28 @@ func (b *Broker) handleConn(conn net.Conn) {
 	// Handle incoming data streams from the agent (for INBOUND direction)
 	go b.handleDataStreams(bs)
 
+	// Read control messages from the agent (logs, etc.)
+	go b.readControlMessages(bs)
+
 	// Heartbeat loop
 	go b.heartbeatLoop(bs)
+}
+
+func (b *Broker) readControlMessages(bs *BrokerSession) {
+	dec := json.NewDecoder(bs.Control)
+	for {
+		var msg ControlMessage
+		if err := dec.Decode(&msg); err != nil {
+			return
+		}
+		if msg.Type == "log" && b.onAgentLog != nil {
+			var entry struct{ Line string `json:"line"` }
+			json.Unmarshal(msg.Payload, &entry)
+			if entry.Line != "" {
+				b.onAgentLog(bs.NodeID, entry.Line)
+			}
+		}
+	}
 }
 
 func (b *Broker) handleDataStreams(bs *BrokerSession) {

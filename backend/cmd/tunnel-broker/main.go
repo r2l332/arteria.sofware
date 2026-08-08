@@ -103,6 +103,10 @@ func main() {
 			brokerActiveConns.Add(-1)
 		},
 
+		OnAgentLog: func(nodeID, line string) {
+			nc.Publish("arteria.events.tunnel.log", []byte(fmt.Sprintf("[%s] %s", nodeID[:8], line)))
+		},
+
 		// Route inbound traffic through NATS — broker can be anywhere in the world
 		OnInbound: func(nodeID string, targetPort int, data []byte) {
 			subject := "arteria.ingest.raw"

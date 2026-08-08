@@ -14,35 +14,34 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false 
 function SourceNode({ data }: { data: any }) {
   const [editing, setEditing] = useState(false);
   return (
-    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
-      <Handle type="source" position={Position.Right} className="!bg-sky-400 !w-2.5 !h-2.5" />
-      <div className="flex items-center gap-2 mb-1">
-        <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center"><Radio className="w-4 h-4 text-sky-400" /></div>
+    <div className="w-[110px] rounded-lg border p-2 backdrop-blur-xl bg-slate-900/80 shadow-lg border-slate-800 hover:scale-[1.03] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
+      <Handle type="source" position={Position.Right} className="!bg-sky-400 !w-2 !h-2" />
+      <div className="flex items-center gap-1.5">
+        <div className="w-5 h-5 rounded bg-sky-500/10 flex items-center justify-center shrink-0"><Radio className="w-3 h-3 text-sky-400" /></div>
         <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
-          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+          <div className="text-[9px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[7px] text-gray-500 font-mono truncate">{data.sub}</div>
         </div>
       </div>
       {editing && data.onChangeCP && (
-        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-sky-700 rounded text-[9px] text-white" defaultValue={data.cpId}
+        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-sky-700 rounded text-[8px] text-white" defaultValue={data.cpId}
           onChange={(e) => { data.onChangeCP(e.target.value); setEditing(false); }} onBlur={() => setEditing(false)}>
           {data.cpOptions?.map((cp: any) => <option key={cp.id} value={cp.id}>{cp.name}</option>)}
         </select>
       )}
-      {!editing && <div className="text-[7px] text-gray-600 mt-1 text-center">double-click to change</div>}
     </div>
   );
 }
 function FilterNode({ data }: { data: any }) {
   return (
-    <div className={`w-[160px] rounded-xl border p-3 backdrop-blur-xl shadow-2xl hover:scale-[1.04] transition-all duration-200 ${data.active !== false ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-900/40 border-slate-800/50 opacity-50'}`}>
-      <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-2.5 !h-2.5" />
-      <Handle type="source" position={Position.Right} className="!bg-amber-400 !w-2.5 !h-2.5" />
-      <div className="flex items-center gap-2 mb-1">
-        <div className="w-7 h-7 rounded-lg bg-amber-500/10 flex items-center justify-center"><Cpu className="w-4 h-4 text-amber-400" /></div>
+    <div className={`w-[110px] rounded-lg border p-2 backdrop-blur-xl shadow-lg hover:scale-[1.03] transition-all duration-200 ${data.active !== false ? 'bg-slate-900/80 border-slate-800' : 'bg-slate-900/40 border-slate-800/50 opacity-50'}`}>
+      <Handle type="target" position={Position.Left} className="!bg-amber-400 !w-2 !h-2" />
+      <Handle type="source" position={Position.Right} className="!bg-amber-400 !w-2 !h-2" />
+      <div className="flex items-center gap-1.5">
+        <div className="w-5 h-5 rounded bg-amber-500/10 flex items-center justify-center shrink-0"><Cpu className="w-3 h-3 text-amber-400" /></div>
         <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
-          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+          <div className="text-[9px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[7px] text-gray-500 font-mono truncate">{data.sub}</div>
         </div>
       </div>
     </div>
@@ -51,22 +50,21 @@ function FilterNode({ data }: { data: any }) {
 function DestNode({ data }: { data: any }) {
   const [editing, setEditing] = useState(false);
   return (
-    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
-      <Handle type="target" position={Position.Left} className="!bg-emerald-400 !w-2.5 !h-2.5" />
-      <div className="flex items-center gap-2 mb-1">
-        <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center"><Send className="w-4 h-4 text-emerald-400" /></div>
+    <div className="w-[110px] rounded-lg border p-2 backdrop-blur-xl bg-slate-900/80 shadow-lg border-slate-800 hover:scale-[1.03] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
+      <Handle type="target" position={Position.Left} className="!bg-emerald-400 !w-2 !h-2" />
+      <div className="flex items-center gap-1.5">
+        <div className="w-5 h-5 rounded bg-emerald-500/10 flex items-center justify-center shrink-0"><Send className="w-3 h-3 text-emerald-400" /></div>
         <div className="flex-1 min-w-0">
-          <div className="text-[10px] font-semibold text-white truncate">{data.label}</div>
-          <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
+          <div className="text-[9px] font-semibold text-white truncate">{data.label}</div>
+          <div className="text-[7px] text-gray-500 font-mono truncate">{data.sub}</div>
         </div>
       </div>
       {editing && data.onChangeCP && (
-        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-emerald-700 rounded text-[9px] text-white" defaultValue={data.cpId}
+        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-emerald-700 rounded text-[8px] text-white" defaultValue={data.cpId}
           onChange={(e) => { data.onChangeCP(e.target.value); setEditing(false); }} onBlur={() => setEditing(false)}>
           {data.cpOptions?.map((cp: any) => <option key={cp.id} value={cp.id}>{cp.name}</option>)}
         </select>
       )}
-      {!editing && <div className="text-[7px] text-gray-600 mt-1 text-center">double-click to change</div>}
     </div>
   );
 }
@@ -108,7 +106,7 @@ export default function RoutesPage() {
 
     const n: Node[] = [];
     const e: Edge[] = [];
-    const startX = 50, y = 80, spacing = 200;
+    const startX = 30, y = 50, spacing = 150;
 
     const inputCPs = commPoints.filter(c => c.direction === 'INPUT').map(c => ({ id: c.comm_point_id, name: `${c.name} (${c.protocol}:${c.port})` }));
     const outputCPs = commPoints.filter(c => c.direction === 'OUTPUT').map(c => ({ id: c.comm_point_id, name: `${c.name} (${c.protocol}:${c.port})` }));
@@ -243,7 +241,7 @@ export default function RoutesPage() {
         </div>
 
         {/* Center: Canvas for selected route */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden max-w-[50%]">
           {selectedRoute ? (
             <>
               <div className="px-4 py-2 border-b border-arteria-border flex items-center justify-between shrink-0 bg-gray-900/30">

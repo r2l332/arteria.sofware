@@ -419,7 +419,7 @@ export default function PlatformPage() {
                 <h2 className="text-sm font-semibold text-white uppercase tracking-wider">Service Logs</h2>
                 <select value={logService} onChange={(e) => setLogService(e.target.value)}
                   className="bg-arteria-bg border border-arteria-border rounded px-2 py-1 text-xs text-white">
-                  {['api', 'ingestion', 'processing', 'egress', 'broker'].map(s => (
+                  {['api', 'ingestion', 'processing', 'egress', 'broker', 'capillary'].map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
