@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
-import { getTunnelNodes, createTunnelNode, deleteTunnelNode, getTunnelMappings, createTunnelMapping } from '@/lib/api';
+import { getTunnelNodes, createTunnelNode, deleteTunnelNode, getTunnelMappings, createTunnelMapping, pushTunnelUpdate } from '@/lib/api';
 
 interface TunnelNode {
   node_id: string;
@@ -36,6 +36,7 @@ export default function TunnelPage() {
     target_port: 2575, comm_point_id: '', protocol: 'MLLP', is_active: true,
   });
   const [enrollInfo, setEnrollInfo] = useState<{ token: string; nodeId: string } | null>(null);
+  const [updating, setUpdating] = useState<string | null>(null);
 
   const load = () => getTunnelNodes().then(d => setNodes(d.nodes || [])).catch(console.error);
   useEffect(() => { load(); }, []);
@@ -57,6 +58,18 @@ export default function TunnelPage() {
     if (!confirm('Delete this Capillary node?')) return;
     await deleteTunnelNode(id);
     if (selectedNode?.node_id === id) { setSelectedNode(null); setMappings([]); }
+    load();
+  };
+
+  const updateNode = async (id: string) => {
+    if (!confirm('Push Capillary update to this agent? It will restart automatically.')) return;
+    setUpdating(id);
+    try {
+      const r = await pushTunnelUpdate(id);
+      if (r.error) alert('Update failed: ' + r.error);
+      else alert('Update pushed successfully. Agent is restarting.');
+    } catch (e: any) { alert('Update failed: ' + (e.message || e)); }
+    setUpdating(null);
     load();
   };
 
@@ -145,6 +158,13 @@ export default function TunnelPage() {
                       <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${statusColor[node.status] || 'bg-gray-500/20 text-gray-400'}`}>
                         {node.status}
                       </span>
+                      {node.status === 'CONNECTED' && (
+                        <button onClick={e => { e.stopPropagation(); updateNode(node.node_id); }}
+                          disabled={updating === node.node_id}
+                          className="text-[10px] px-2 py-0.5 bg-cyan-900/30 border border-cyan-800/50 text-cyan-400 rounded hover:bg-cyan-900/50 disabled:opacity-50">
+                          {updating === node.node_id ? 'Updating...' : 'Update'}
+                        </button>
+                      )}
                       <button onClick={e => { e.stopPropagation(); deleteNode(node.node_id); }}
                         className="text-[10px] text-red-400 hover:text-red-300">Del</button>
                     </div>

@@ -108,6 +108,7 @@ services:
       MODULE_TUNNEL: ${MODULE_TUNNEL:-true}
     volumes:
       - arteria_logs:/var/log/arteria
+      - ./dist:/dist:ro
     depends_on:
       nats:
         condition: service_healthy

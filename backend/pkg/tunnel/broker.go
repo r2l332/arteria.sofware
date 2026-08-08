@@ -72,10 +72,13 @@ type Broker struct {
 
 // BrokerSession represents one connected agent.
 type BrokerSession struct {
-	NodeID    string
-	Session   *yamux.Session
-	Control   net.Conn
-	Connected time.Time
+	NodeID       string
+	Session      *yamux.Session
+	Control      net.Conn
+	Connected    time.Time
+	AgentVersion string
+	AgentOS      string
+	AgentArch    string
 }
 
 // BrokerConfig holds broker configuration.
@@ -175,6 +178,7 @@ func (b *Broker) handleConn(conn net.Conn) {
 	}
 
 	var nodeID string
+	var agentVersion, agentOS, agentArch string
 
 	switch firstMsg.Type {
 	case "enroll":
@@ -212,7 +216,17 @@ func (b *Broker) handleConn(conn net.Conn) {
 		} else {
 			nodeID = cn
 		}
-		log.Printf("[BROKER] node reconnected: %s", nodeID)
+		// Parse version info from connect payload
+		var connectInfo struct {
+			AgentVersion string `json:"agent_version"`
+			OS           string `json:"os"`
+			Arch         string `json:"arch"`
+		}
+		json.Unmarshal(firstMsg.Payload, &connectInfo)
+		agentVersion = connectInfo.AgentVersion
+		agentOS = connectInfo.OS
+		agentArch = connectInfo.Arch
+		log.Printf("[BROKER] node reconnected: %s (v%s %s/%s)", nodeID, agentVersion, agentOS, agentArch)
 
 	default:
 		log.Printf("[BROKER] unknown first message type: %s", firstMsg.Type)
@@ -222,10 +236,13 @@ func (b *Broker) handleConn(conn net.Conn) {
 
 	// Register session
 	bs := &BrokerSession{
-		NodeID:    nodeID,
-		Session:   session,
-		Control:   controlStream,
-		Connected: time.Now(),
+		NodeID:       nodeID,
+		Session:      session,
+		Control:      controlStream,
+		Connected:    time.Now(),
+		AgentVersion: agentVersion,
+		AgentOS:      agentOS,
+		AgentArch:    agentArch,
 	}
 	b.mu.Lock()
 	b.sessions[nodeID] = bs
@@ -398,6 +415,51 @@ func (b *Broker) ConnectedNodes() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// GetSessionInfo returns version/os/arch for a connected node.
+func (b *Broker) GetSessionInfo(nodeID string) (version, goos, goarch string, connected time.Time, ok bool) {
+	b.mu.RLock()
+	bs, ok := b.sessions[nodeID]
+	b.mu.RUnlock()
+	if !ok {
+		return
+	}
+	return bs.AgentVersion, bs.AgentOS, bs.AgentArch, bs.Connected, true
+}
+
+// PushUpdate sends a new agent binary to a connected node.
+func (b *Broker) PushUpdate(nodeID string, version string, binary []byte, sha256hex string) error {
+	b.mu.RLock()
+	bs, ok := b.sessions[nodeID]
+	b.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("node %s not connected", nodeID)
+	}
+
+	// Send update control message with metadata
+	payload, _ := json.Marshal(map[string]interface{}{
+		"version": version,
+		"size":    len(binary),
+		"sha256":  sha256hex,
+	})
+	if err := json.NewEncoder(bs.Control).Encode(ControlMessage{Type: "update", Payload: payload}); err != nil {
+		return fmt.Errorf("send update control: %w", err)
+	}
+
+	// Open a yamux stream and push the binary
+	stream, err := bs.Session.Open()
+	if err != nil {
+		return fmt.Errorf("open update stream: %w", err)
+	}
+	defer stream.Close()
+
+	// 4-byte magic header so agent can identify this stream
+	if _, err := stream.Write([]byte("CUPD")); err != nil {
+		return err
+	}
+	_, err = stream.Write(binary)
+	return err
 }
 
 // Stop shuts down the broker.

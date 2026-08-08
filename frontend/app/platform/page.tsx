@@ -436,7 +436,7 @@ export default function PlatformPage() {
                       </div>
                     );
                   })}
-                  {logs.length === 0 && <p className="text-arteria-muted p-4">No logs available for {logService}. Check the volume mount.</p>}
+                  {logs.length === 0 && <p className="text-arteria-muted p-4">{logService === 'capillary' ? 'No Capillary agent logs yet. Logs stream in real-time when agents connect and send traffic.' : `No logs available for ${logService}. Check the volume mount.`}</p>}
                 </div>
               </div>
               <p className="text-[10px] text-gray-600">{logs.length} lines shown</p>

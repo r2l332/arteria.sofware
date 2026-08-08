@@ -94,6 +94,7 @@ func main() {
 			updateNodeStatus(session, nodeID, "CONNECTED")
 			brokerConnections.Add(1)
 			brokerActiveConns.Add(1)
+			tunnelLog(nc, "[BROKER] node connected: %s", nodeID[:8])
 		},
 
 		OnDisconn: func(nodeID string) {
@@ -101,6 +102,7 @@ func main() {
 			updateNodeStatus(session, nodeID, "DISCONNECTED")
 			brokerDisconnects.Add(1)
 			brokerActiveConns.Add(-1)
+			tunnelLog(nc, "[BROKER] node disconnected: %s", nodeID[:8])
 		},
 
 		OnAgentLog: func(nodeID, line string) {
@@ -123,6 +125,7 @@ func main() {
 			}
 
 			log.Printf("[BROKER] routing %d bytes from node %s port %d via NATS", len(payload), nodeID, targetPort)
+			tunnelLog(nc, "[BROKER] routing %d bytes from node %s port %d", len(payload), nodeID[:8], targetPort)
 			brokerBytesIn.Add(int64(len(data)))
 			brokerMsgsRouted.Add(1)
 
@@ -203,7 +206,46 @@ func main() {
 		msg.Respond(resp)
 	})
 
+	// Push update to a connected agent
+	nc.Subscribe("arteria.tunnel.update", func(msg *nats.Msg) {
+		var req struct {
+			NodeID  string `json:"node_id"`
+			Version string `json:"version"`
+			Binary  []byte `json:"binary"`
+			SHA256  string `json:"sha256"`
+		}
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
+			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": "invalid request"})
+			msg.Respond(resp)
+			return
+		}
+		tunnelLog(nc, "[BROKER] pushing update v%s to node %s (%d bytes)", req.Version, req.NodeID[:8], len(req.Binary))
+		if err := broker.PushUpdate(req.NodeID, req.Version, req.Binary, req.SHA256); err != nil {
+			resp, _ := json.Marshal(map[string]interface{}{"success": false, "error": err.Error()})
+			msg.Respond(resp)
+			return
+		}
+		resp, _ := json.Marshal(map[string]interface{}{"success": true})
+		msg.Respond(resp)
+	})
+
+	// Return session info for connected nodes (version, os, arch)
+	nc.Subscribe("arteria.tunnel.session-info", func(msg *nats.Msg) {
+		nodeID := string(msg.Data)
+		ver, goos, goarch, connected, ok := broker.GetSessionInfo(nodeID)
+		if !ok {
+			msg.Respond([]byte(`{"connected":false}`))
+			return
+		}
+		resp, _ := json.Marshal(map[string]interface{}{
+			"connected": true, "agent_version": ver,
+			"os": goos, "arch": goarch, "connected_at": connected,
+		})
+		msg.Respond(resp)
+	})
+
 	log.Printf("[BROKER] tunnel broker started on %s", listenAddr)
+	tunnelLog(nc, "[BROKER] tunnel broker started on %s", listenAddr)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -310,6 +352,10 @@ func updateNodeStatus(session *gocql.Session, nodeIDStr, status string) {
 // createEnrollmentToken is a helper used by the API to generate tokens.
 func createEnrollmentToken() string {
 	return uuid.New().String()
+}
+
+func tunnelLog(nc *nats.Conn, format string, args ...interface{}) {
+	nc.Publish("arteria.events.tunnel.log", []byte(fmt.Sprintf(format, args...)))
 }
 
 func envOr(key, fallback string) string {

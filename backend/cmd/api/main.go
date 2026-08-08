@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -281,6 +282,7 @@ func main() {
 	api.Post("/tunnel/nodes", auth.RequirePermission(auth.PermTunnelManage), createTunnelNode(session))
 	api.Delete("/tunnel/nodes/:id", auth.RequirePermission(auth.PermTunnelManage), deleteTunnelNode(session))
 	api.Post("/tunnel/nodes/:id/push-config", auth.RequirePermission(auth.PermTunnelManage), pushTunnelConfigHandler(session, nc))
+	api.Post("/tunnel/nodes/:id/update", auth.RequirePermission(auth.PermTunnelManage), pushTunnelUpdateHandler(nc))
 
 	// --- User Management (security role) ---
 	api.Get("/users", auth.RequirePermission(auth.PermUserView), listUsers(session))
@@ -1080,6 +1082,15 @@ func getStats(session *gocql.Session) fiber.Handler {
 	}
 }
 
+func tunnelLog(nc *nats.Conn, format string, args ...interface{}) {
+	nc.Publish("arteria.events.tunnel.log", []byte(fmt.Sprintf(format, args...)))
+}
+
+func sha256Sum(data []byte) []byte {
+	h := sha256.Sum256(data)
+	return h[:]
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -1735,6 +1746,50 @@ func pushTunnelConfigHandler(session *gocql.Session, nc *nats.Conn) fiber.Handle
 		nodeID := c.Params("id")
 		pushTunnelConfig(nc, nodeID)
 		return c.JSON(fiber.Map{"status": "config push triggered", "node_id": nodeID})
+	}
+}
+
+func pushTunnelUpdateHandler(nc *nats.Conn) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		nodeID := c.Params("id")
+
+		// Get agent's current session info (os/arch) from broker
+		infoResp, err := nc.Request("arteria.tunnel.session-info", []byte(nodeID), 3*time.Second)
+		if err != nil {
+			return c.Status(502).JSON(fiber.Map{"error": "broker unreachable"})
+		}
+		var info struct {
+			Connected bool   `json:"connected"`
+			OS        string `json:"os"`
+			Arch      string `json:"arch"`
+			Version   string `json:"agent_version"`
+		}
+		json.Unmarshal(infoResp.Data, &info)
+		if !info.Connected {
+			return c.Status(400).JSON(fiber.Map{"error": "node not connected"})
+		}
+
+		// Read the appropriate pre-built binary
+		binaryDir := envOrDefault("CAPILLARY_DIST_DIR", "/dist")
+		version := envOrDefault("CAPILLARY_VERSION", "0.2.0")
+		binaryName := fmt.Sprintf("capillary-%s-%s-%s", version, info.OS, info.Arch)
+		binary, err := os.ReadFile(binaryDir + "/" + binaryName)
+		if err != nil {
+			return c.Status(404).JSON(fiber.Map{"error": fmt.Sprintf("binary not found: %s (build with scripts/build-capillary.sh)", binaryName)})
+		}
+
+		// Push to broker which pushes to agent
+		reqData, _ := json.Marshal(map[string]interface{}{
+			"node_id": nodeID, "version": version,
+			"binary": binary, "sha256": fmt.Sprintf("%x", sha256Sum(binary)),
+		})
+		resp, err := nc.Request("arteria.tunnel.update", reqData, 30*time.Second)
+		if err != nil {
+			return c.Status(502).JSON(fiber.Map{"error": "update push timed out"})
+		}
+		var result map[string]interface{}
+		json.Unmarshal(resp.Data, &result)
+		return c.JSON(result)
 	}
 }
 

@@ -10,8 +10,12 @@ import (
 	"github.com/r2l332/arteria.app/backend/pkg/tunnel"
 )
 
+// Set via -ldflags at build time
+var version = "0.2.0"
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	tunnel.AgentVersion = version
 
 	if len(os.Args) < 2 {
 		usage()

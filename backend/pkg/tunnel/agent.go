@@ -1,18 +1,25 @@
 package tunnel
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/yamux"
 )
+
+// AgentVersion is set by main at startup from build ldflags.
+var AgentVersion = "0.0.0"
 
 // Agent connects outbound to the broker and manages local port listeners.
 type Agent struct {
@@ -199,8 +206,13 @@ func (a *Agent) dial() error {
 		return fmt.Errorf("control stream: %w", err)
 	}
 
-	// Send connect message
-	msg := ControlMessage{Type: "connect", Payload: json.RawMessage(`{}`)}
+	// Send connect message with version info
+	connectPayload, _ := json.Marshal(map[string]string{
+		"agent_version": AgentVersion,
+		"os":            runtime.GOOS,
+		"arch":          runtime.GOARCH,
+	})
+	msg := ControlMessage{Type: "connect", Payload: connectPayload}
 	if err := json.NewEncoder(controlStream).Encode(msg); err != nil {
 		session.Close()
 		return fmt.Errorf("send connect: %w", err)
@@ -247,6 +259,16 @@ func (a *Agent) runLoop() {
 
 		case "heartbeat":
 			// No-op, keeps connection alive
+
+		case "update":
+			var update struct {
+				Version string `json:"version"`
+				Size    int64  `json:"size"`
+				SHA256  string `json:"sha256"`
+			}
+			json.Unmarshal(msg.Payload, &update)
+			log.Printf("[AGENT] update available: %s → %s (%d bytes)", AgentVersion, update.Version, update.Size)
+			go a.applyUpdate(update.Version, update.Size, update.SHA256)
 
 		default:
 			log.Printf("[AGENT] unknown control message: %s", msg.Type)
@@ -431,6 +453,68 @@ func splitHL7Field(data []byte, delim byte) [][]byte {
 		}
 	}
 	return fields
+}
+
+// applyUpdate receives a new binary over a yamux stream, replaces itself, and restarts.
+func (a *Agent) applyUpdate(version string, size int64, expectedSHA string) {
+	if a.session == nil || a.session.IsClosed() {
+		log.Printf("[AGENT] cannot update: no active session")
+		return
+	}
+
+	// Accept the update stream the broker opens after sending the control message
+	stream, err := a.session.Accept()
+	if err != nil {
+		log.Printf("[AGENT] update stream accept error: %v", err)
+		return
+	}
+	defer stream.Close()
+
+	// Read 4-byte magic header "CUPD" to confirm this is an update stream
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(stream, magic); err != nil || string(magic) != "CUPD" {
+		log.Printf("[AGENT] invalid update stream header")
+		return
+	}
+
+	// Write to temp file
+	exe, _ := os.Executable()
+	tmpPath := exe + ".update"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		log.Printf("[AGENT] create update file: %v", err)
+		return
+	}
+
+	h := sha256.New()
+	written, err := io.Copy(f, io.TeeReader(stream, h))
+	f.Close()
+	if err != nil {
+		log.Printf("[AGENT] download update: %v", err)
+		os.Remove(tmpPath)
+		return
+	}
+
+	// Verify SHA256
+	gotSHA := hex.EncodeToString(h.Sum(nil))
+	if expectedSHA != "" && gotSHA != expectedSHA {
+		log.Printf("[AGENT] update SHA256 mismatch: expected %s got %s", expectedSHA, gotSHA)
+		os.Remove(tmpPath)
+		return
+	}
+
+	log.Printf("[AGENT] downloaded update v%s (%d bytes, sha256=%s)", version, written, gotSHA[:12])
+
+	// Replace self
+	if err := os.Rename(tmpPath, exe); err != nil {
+		log.Printf("[AGENT] replace binary: %v", err)
+		os.Remove(tmpPath)
+		return
+	}
+
+	log.Printf("[AGENT] restarting with new binary v%s", version)
+	// Exec replaces this process — works in containers and bare metal
+	syscall.Exec(exe, os.Args, os.Environ())
 }
 
 // Stop shuts down the agent.
