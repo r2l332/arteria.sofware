@@ -833,8 +833,8 @@ func deleteFilter(session *gocql.Session) fiber.Handler {
 		if err != nil {
 			return c.Status(400).JSON(fiber.Map{"error": "invalid route ID"})
 		}
-		order := c.QueryInt("order", -1)
-		if order < 0 {
+		order, err := c.ParamsInt("order", -1)
+		if err != nil || order < 0 {
 			return c.Status(400).JSON(fiber.Map{"error": "execution_order required"})
 		}
 		session.Query(`DELETE FROM arteria.filters WHERE route_id=? AND execution_order=?`, routeID, order).Exec()
