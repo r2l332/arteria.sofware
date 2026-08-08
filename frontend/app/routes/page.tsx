@@ -80,6 +80,7 @@ export default function RoutesPage() {
   const [editorValue, setEditorValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [showNewRoute, setShowNewRoute] = useState(false);
+  const [canvasHeight, setCanvasHeight] = useState(220);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -252,7 +253,7 @@ export default function RoutesPage() {
                 </div>
                 <button onClick={newFilter} className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 flex items-center gap-1"><Plus className="w-3 h-3" />Add Filter</button>
               </div>
-              <div className="shrink-0 relative overflow-x-auto border-b border-gray-800/30 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]" style={{ height: 220 }}>
+              <div className="shrink-0 relative overflow-x-auto border-b border-gray-800/30 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]" style={{ height: canvasHeight }}>
                 <div className="absolute inset-0 bg-gradient-to-tr from-cyan-950/10 via-transparent to-purple-950/10 pointer-events-none" />
                 <ReactFlow
                   nodes={nodes} edges={edges}
@@ -266,6 +267,25 @@ export default function RoutesPage() {
                   <Controls className="!bg-slate-900/80 !border-slate-700 !rounded-xl !backdrop-blur-xl [&>button]:!bg-slate-800 [&>button]:!border-slate-700 [&>button]:!text-gray-300" />
                 </ReactFlow>
               </div>
+
+              {/* Resize handle */}
+              {editingFilter && (
+                <div className="h-1.5 shrink-0 cursor-row-resize bg-arteria-border/50 hover:bg-arteria-accent/50 active:bg-arteria-accent transition-colors flex items-center justify-center group"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const startY = e.clientY;
+                    const startH = canvasHeight;
+                    const onMove = (ev: MouseEvent) => {
+                      const newH = Math.max(100, Math.min(500, startH + (ev.clientY - startY)));
+                      setCanvasHeight(newH);
+                    };
+                    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                  }}>
+                  <div className="w-8 h-0.5 rounded bg-gray-600 group-hover:bg-arteria-accent" />
+                </div>
+              )}
 
               {/* Editor panel below canvas */}
               {editingFilter ? (
