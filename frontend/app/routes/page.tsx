@@ -12,8 +12,9 @@ const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false 
 
 // --- Custom Nodes ---
 function SourceNode({ data }: { data: any }) {
+  const [editing, setEditing] = useState(false);
   return (
-    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200">
+    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
       <Handle type="source" position={Position.Right} className="!bg-sky-400 !w-2.5 !h-2.5" />
       <div className="flex items-center gap-2 mb-1">
         <div className="w-7 h-7 rounded-lg bg-sky-500/10 flex items-center justify-center"><Radio className="w-4 h-4 text-sky-400" /></div>
@@ -22,6 +23,13 @@ function SourceNode({ data }: { data: any }) {
           <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
         </div>
       </div>
+      {editing && data.onChangeCP && (
+        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-sky-700 rounded text-[9px] text-white" defaultValue={data.cpId}
+          onChange={(e) => { data.onChangeCP(e.target.value); setEditing(false); }} onBlur={() => setEditing(false)}>
+          {data.cpOptions?.map((cp: any) => <option key={cp.id} value={cp.id}>{cp.name}</option>)}
+        </select>
+      )}
+      {!editing && <div className="text-[7px] text-gray-600 mt-1 text-center">double-click to change</div>}
     </div>
   );
 }
@@ -41,8 +49,9 @@ function FilterNode({ data }: { data: any }) {
   );
 }
 function DestNode({ data }: { data: any }) {
+  const [editing, setEditing] = useState(false);
   return (
-    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200">
+    <div className="w-[160px] rounded-xl border p-3 backdrop-blur-xl bg-slate-900/80 shadow-2xl border-slate-800 hover:scale-[1.04] transition-all duration-200" onDoubleClick={() => setEditing(true)}>
       <Handle type="target" position={Position.Left} className="!bg-emerald-400 !w-2.5 !h-2.5" />
       <div className="flex items-center gap-2 mb-1">
         <div className="w-7 h-7 rounded-lg bg-emerald-500/10 flex items-center justify-center"><Send className="w-4 h-4 text-emerald-400" /></div>
@@ -51,6 +60,13 @@ function DestNode({ data }: { data: any }) {
           <div className="text-[8px] text-gray-500 font-mono truncate">{data.sub}</div>
         </div>
       </div>
+      {editing && data.onChangeCP && (
+        <select autoFocus className="w-full mt-1 px-1 py-0.5 bg-gray-800 border border-emerald-700 rounded text-[9px] text-white" defaultValue={data.cpId}
+          onChange={(e) => { data.onChangeCP(e.target.value); setEditing(false); }} onBlur={() => setEditing(false)}>
+          {data.cpOptions?.map((cp: any) => <option key={cp.id} value={cp.id}>{cp.name}</option>)}
+        </select>
+      )}
+      {!editing && <div className="text-[7px] text-gray-600 mt-1 text-center">double-click to change</div>}
     </div>
   );
 }
@@ -94,8 +110,20 @@ export default function RoutesPage() {
     const e: Edge[] = [];
     const startX = 50, y = 80, spacing = 200;
 
+    const inputCPs = commPoints.filter(c => c.direction === 'INPUT').map(c => ({ id: c.comm_point_id, name: `${c.name} (${c.protocol}:${c.port})` }));
+    const outputCPs = commPoints.filter(c => c.direction === 'OUTPUT').map(c => ({ id: c.comm_point_id, name: `${c.name} (${c.protocol}:${c.port})` }));
+
+    const changeSourceCP = async (cpId: string) => {
+      await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ source_comm_point_id: cpId }) });
+      loadRoutes();
+    };
+    const changeDestCP = async (cpId: string) => {
+      await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ dest_comm_point_id: cpId }) });
+      loadRoutes();
+    };
+
     // Source CP
-    n.push({ id: 'src', type: 'source', position: { x: startX, y }, data: { label: getCPName(selectedRoute.source_comm_point_id), sub: getCPSub(selectedRoute.source_comm_point_id) } });
+    n.push({ id: 'src', type: 'source', position: { x: startX, y }, data: { label: getCPName(selectedRoute.source_comm_point_id), sub: getCPSub(selectedRoute.source_comm_point_id), cpId: selectedRoute.source_comm_point_id, cpOptions: inputCPs, onChangeCP: changeSourceCP } });
 
     // Filters
     filters.forEach((f, i) => {
@@ -107,7 +135,7 @@ export default function RoutesPage() {
 
     // Dest CP
     const destX = startX + (filters.length + 1) * spacing;
-    n.push({ id: 'dst', type: 'destination', position: { x: destX, y }, data: { label: getCPName(selectedRoute.dest_comm_point_id), sub: getCPSub(selectedRoute.dest_comm_point_id) } });
+    n.push({ id: 'dst', type: 'destination', position: { x: destX, y }, data: { label: getCPName(selectedRoute.dest_comm_point_id), sub: getCPSub(selectedRoute.dest_comm_point_id), cpId: selectedRoute.dest_comm_point_id, cpOptions: outputCPs, onChangeCP: changeDestCP } });
 
     if (filters.length > 0) e.push({ id: 'e-flast-dst', source: `f-${filters.length-1}`, target: 'dst', animated: true, style: { stroke: '#10b981', strokeWidth: 2 } });
     else e.push({ id: 'e-src-dst', source: 'src', target: 'dst', animated: true, style: { stroke: '#a855f7', strokeWidth: 2 } });
@@ -274,8 +302,8 @@ export default function RoutesPage() {
         )}
 
         {editingCP && selectedRoute && (
-          <div className="w-[300px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0 p-4">
-            <div className="flex items-center justify-between mb-4">
+          <div className="w-[280px] border-l border-arteria-border flex flex-col overflow-hidden bg-gray-900/50 shrink-0 p-4">
+            <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-white">{editingCP === 'source' ? 'Source' : 'Destination'} CP</h3>
               <button onClick={() => setEditingCP(null)} className="text-gray-500 hover:text-white text-xs">✕</button>
             </div>
@@ -283,15 +311,14 @@ export default function RoutesPage() {
               onChange={async (e) => {
                 const field = editingCP === 'source' ? 'source_comm_point_id' : 'dest_comm_point_id';
                 await apiFetch(`/routes/${selectedRoute.route_id}/rewire`, { method: 'PATCH', body: JSON.stringify({ [field]: e.target.value }) });
-                loadRoutes();
-                setEditingCP(null);
+                loadRoutes(); setEditingCP(null);
               }}
               className="w-full px-3 py-2 bg-arteria-bg border border-arteria-border rounded-lg text-sm text-white">
               {commPoints.filter(c => editingCP === 'source' ? c.direction === 'INPUT' : c.direction === 'OUTPUT').map(c => (
                 <option key={c.comm_point_id} value={c.comm_point_id}>{c.name} ({c.protocol}:{c.port})</option>
               ))}
             </select>
-            <p className="text-[10px] text-gray-600 mt-2">Select a different {editingCP === 'source' ? 'input' : 'output'} communication point for this route.</p>
+            <p className="text-[9px] text-gray-600 mt-2">Or double-click the node on the canvas to change inline.</p>
           </div>
         )}
 
