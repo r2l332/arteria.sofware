@@ -193,15 +193,23 @@ export default function TunnelPage() {
                   </div>
                   {platformPick === node.node_id && (
                     <div className="mt-2 p-2 bg-arteria-bg border border-arteria-accent/50 rounded-lg">
-                      <p className="text-[10px] text-arteria-muted mb-2">Agent too old to report platform. Select:</p>
-                      <div className="flex gap-1.5 flex-wrap">
+                      <p className="text-[10px] text-arteria-muted mb-2">Select deployment type:</p>
+                      <div className="flex gap-1.5 flex-wrap mb-2">
                         {[['darwin/arm64','macOS ARM'],['darwin/amd64','macOS Intel'],['linux/amd64','Linux x64'],['linux/arm64','Linux ARM'],['windows/amd64','Windows']].map(([val,label]) => (
                           <button key={val} onClick={e => { e.stopPropagation(); const [o,a]=val.split('/'); updateNode(node.node_id,o,a); }}
                             className="px-2 py-1 text-[10px] bg-arteria-accent/20 border border-arteria-accent/40 text-arteria-accent rounded hover:bg-arteria-accent/30">{label}</button>
                         ))}
-                        <button onClick={e => { e.stopPropagation(); setPlatformPick(null); }}
-                          className="px-2 py-1 text-[10px] text-arteria-muted hover:text-white">Cancel</button>
                       </div>
+                      <details className="text-[10px]">
+                        <summary className="text-cyan-400 cursor-pointer hover:text-cyan-300">Docker container?</summary>
+                        <div className="mt-1.5 p-2 bg-black/50 rounded font-mono text-[9px] text-green-400 select-all leading-relaxed">
+                          git pull origin main<br/>
+                          docker compose build capillary<br/>
+                          docker compose up -d capillary
+                        </div>
+                      </details>
+                      <button onClick={e => { e.stopPropagation(); setPlatformPick(null); }}
+                        className="mt-1.5 text-[10px] text-arteria-muted hover:text-white">Cancel</button>
                     </div>
                   )}
                 </div>
