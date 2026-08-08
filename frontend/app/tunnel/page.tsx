@@ -77,7 +77,15 @@ export default function TunnelPage() {
       } else if (r.success) {
         toast('Update pushed — agent is restarting', 'success');
       }
-    } catch (e: any) { toast('Update failed: ' + (e.message || e), 'error'); }
+    } catch (e: any) {
+      const msg = e.message || '';
+      if (msg.includes('platform') || msg.includes('OS/arch')) {
+        setPlatformPick(id);
+        setUpdating(null);
+        return;
+      }
+      toast('Update failed: ' + msg, 'error');
+    }
     setUpdating(null);
     load();
   };
